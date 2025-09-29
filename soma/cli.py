@@ -1,8 +1,7 @@
 """
 cli.py
 
-This module defines CLI commands to build the site and start a local
-development server (implemented in main.py).
+Defines various CLI commands (implemented in main.py).
 
 Author: Oskar Floeck
 Date: 11-09-2025
