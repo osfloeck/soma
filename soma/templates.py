@@ -48,7 +48,7 @@ CATEGORY_TEMPLATE = '''{% extends "base.html" %}
 {{ content | safe }}
 <h2>Recent Content</h2>
 <ul>
-{% for item in content %}
+{% for item in items %}
     <li><a href="{{ item.url }}">{{ item.title }}</a> - {{ item.date }}</li>
 {% endfor %}
 </ul>

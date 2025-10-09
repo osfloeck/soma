@@ -130,17 +130,16 @@ def process_content_dir(env: Environment, content_dir: Path):
     """Process multiple markdown pages in a single dir"""
     
     for md_file in content_dir.glob("**/*.md"):
-        
-        # Skip drafts (e.g. _new-post.md)
-        if md_file.name.startswith("_"):
-            continue
-        
         process_page(env, md_file)
     
     return
 
 def process_page(env: Environment, md_file_path: Path):
     """Process a single markdown page"""
+    
+    if md_file_path.name.startswith("_"):
+        print(f"soma (debug): Skipping draft {md_file_path}")
+        return
     
     try:
         # Parse frontmatter & content
@@ -151,13 +150,12 @@ def process_page(env: Environment, md_file_path: Path):
             raise ValueError(f"Error: Unable to extract template for {md_file_path}!")
         
         # Case for category index page
+        # Here Collect items for that category
+        # This could be blog posts, recipies, projects
         if md_file_path.name == "index.md" and template_name == "category.html":
             content_dir = md_file_path.parent / "content"
-            if content_dir.exists():
-                # Collect items for that category
-                # This could be blog posts, recipies, projects
-                items = collect_items(content_dir, md_file_path.parent.name)
-                data['items'] = items
+            items = collect_items(content_dir, md_file_path.parent.name)
+            data['items'] = items
         
         # Render with template
         template = env.get_template(template_name)
@@ -186,10 +184,6 @@ def collect_items(content_dir: Path, category_name: str) -> List[dict]:
     
     for md_file in content_dir.glob("*.md"):
         
-        # Ignore drafts
-        if md_file.name.startswith("_"):
-            continue
-    
         try:
             item_data = parse_md(md_file)
             item_url = f"/{category_name}/content/{md_file.stem}.html"
