@@ -29,7 +29,7 @@ This is your new static site built with Soma. Edit this file to customise your h
 
     "blog/index.md": '''---
 title: "Blog"
-template: "category-index"
+template: "category"
 ---
 
 Welcome to my blog! Here you'll find my latest thoughts and updates.
@@ -37,7 +37,7 @@ Welcome to my blog! Here you'll find my latest thoughts and updates.
 
     "projects/index.md": '''---
 title: "Projects"
-template: "category-index"
+template: "category"
 ---
 
 Welcome to my projects page! Here are some things I've been working on.
@@ -45,7 +45,7 @@ Welcome to my projects page! Here are some things I've been working on.
 
     "blog/content/first-post.md": '''---
 title: "My First Blog Post"
-template: "blog-post"
+template: "content"
 date: "2024-01-01"
 ---
 
@@ -62,7 +62,7 @@ This is my first blog post. You can edit this file or create new `.md` files in 
 
     "projects/content/cool-project.md": '''---
 title: "My Cool Project"
-template: "project"
+template: "content"
 date: "2024-01-01"
 ---
 

@@ -60,7 +60,7 @@ CONTENT_TEMPLATE = '''{% extends "base.html" %}
 <h1>{{ title }}</h1>
 <p><em>{{ date }}</em></p>
 {{ content | safe }}
-<p><a href="/??/">← Back to Category</a></p>
+<p><a href="/{{parent_category}}/">← Back to Category</a></p>
 {% endblock %}'''
 
 DEFAULT_TEMPLATES = {

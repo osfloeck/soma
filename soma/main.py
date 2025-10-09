@@ -14,6 +14,7 @@ import socketserver
 import os
 import yaml
 import shutil
+from halo import Halo
 from typing import TypedDict, List
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
@@ -22,15 +23,17 @@ from dateutil.parser import parse as parse_date
 from .templates import DEFAULT_TEMPLATES
 from .content import DEFAULT_CONTENT
 
-class MarkdownPage(TypedDict, total=False):
-    """Define return type in parse_md"""
-    title: str              # required
-    template: str           # required
-    date: datetime          # optional
-    content: str            # required
-    tags: List[str]         # optional
-    categories: List[str]   # optional
-    items: List[dict]       # optional (just category index pages) 
+class MakdownPageBase(TypedDict):
+    title: str
+    template: str
+    content: str
+
+class MarkdownPage(MakdownPageBase, total=False):
+    date: datetime
+    tags: List[str]
+    categories: List[str]
+    items: List[dict]
+    parent_category: str  
 
 def init(name):
     """Initialise project structure."""
@@ -150,12 +153,14 @@ def process_page(env: Environment, md_file_path: Path):
             raise ValueError(f"Error: Unable to extract template for {md_file_path}!")
         
         # Case for category index page
-        # Here Collect items for that category
-        # This could be blog posts, recipies, projects
         if md_file_path.name == "index.md" and template_name == "category.html":
             content_dir = md_file_path.parent / "content"
             items = collect_items(content_dir, md_file_path.parent.name)
             data['items'] = items
+        
+        # Case for content item page
+        if template_name == "content.html":
+            data['parent_category'] = md_file_path.parent.parent.name
         
         # Render with template
         template = env.get_template(template_name)
@@ -185,9 +190,15 @@ def collect_items(content_dir: Path, category_name: str) -> List[dict]:
     for md_file in content_dir.glob("*.md"):
         
         try:
-            item_data = parse_md(md_file)
+            item_data: MarkdownPage = parse_md(md_file)
             item_url = f"/{category_name}/content/{md_file.stem}.html"
-            
+            items.append({
+                'title': item_data['title'],
+                'url': item_url,
+                'date': item_data.get('date', 'No date')
+            })
+        except Exception as e:
+            print(f"Warning: Could not collect {md_file}: {e}")
     
     return items
 
@@ -216,7 +227,7 @@ def parse_md(file_path: Path) -> MarkdownPage:
     # Content processing
     html_content = markdown.markdown(parts[2])
     
-    # Return type
+    # Prepare return
     page: MarkdownPage = {
         'title': frontmatter['title'],
         'template': frontmatter['template'],
@@ -231,14 +242,14 @@ def parse_md(file_path: Path) -> MarkdownPage:
     # Optional fields
     if 'date' in frontmatter:
         try:
-            frontmatter['date'] = parse_date(frontmatter['date'])
+            page['date'] = parse_date(frontmatter['date'])
         except Exception as e:
             raise ValueError(f"Invalid date format in {file_path}: {frontmatter['date']}")
     if 'tags' in frontmatter:
         page['tags'] = frontmatter['tags']
     if 'categories' in frontmatter:
         page['categories'] = frontmatter['categories']
-    
+        
     return page
     
 def serve(port):
