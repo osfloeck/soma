@@ -18,7 +18,7 @@ def cli():
 
 @cli.command()
 @click.option('--name', default="new-soma", help='Name for new site')
-def init(name):
+def init(name: str):
     """Init project contents."""
     main.init(name)
 
@@ -29,10 +29,11 @@ def build():
 
 @cli.command()
 @click.option('--port', default=8080, help='Port to run dev server on.')
-def serve(port):
+@click.option('--dev', is_flag=True, help='Run in development mode.')
+def serve(port: int, dev: bool):
     """Start local development server."""
-    main.serve(port)
-    
+    main.serve(port, dev)
+
 @cli.command()
 def clean():
     """Clean the build directory"""

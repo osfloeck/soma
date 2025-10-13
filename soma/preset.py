@@ -1,5 +1,5 @@
 '''
-content.py
+preset.py
 
 Default content for newly generated sites
 
@@ -11,7 +11,7 @@ License: MIT
 DEFAULT_CONTENT = {
     "index.md": '''---
 title: "Welcome to My Site"
-template: "home"
+template: "default"
 ---
 
 # Welcome!
@@ -20,8 +20,8 @@ This is your new static site built with Soma. Edit this file to customise your h
 
 ## Getting Started
 
-- Add blog posts in the `blog/content/` directory
-- Add projects in the `projects/content/` directory
+- Add blog posts in the `blog/` directory
+- Add projects in the `projects/` directory
 - Customise templates in the `templates/` directory
 - Run `soma build` to generate your site
 - Run `soma serve` to preview locally
@@ -43,7 +43,7 @@ template: "category"
 Welcome to my projects page! Here are some things I've been working on.
 ''',
 
-    "blog/content/first-post.md": '''---
+    "blog/first-post.md": '''---
 title: "My First Blog Post"
 template: "content"
 date: "2024-01-01"
@@ -51,7 +51,7 @@ date: "2024-01-01"
 
 # Hello World!
 
-This is my first blog post. You can edit this file or create new `.md` files in the `blog/content/` directory.
+This is my first blog post. You can edit this file or create new `.md` files in the `blog/` directory.
 
 ## Features
 
@@ -60,7 +60,7 @@ This is my first blog post. You can edit this file or create new `.md` files in 
 - Clean URL structure
 ''',
 
-    "projects/content/cool-project.md": '''---
+    "projects/cool-project.md": '''---
 title: "My Cool Project"
 template: "content"
 date: "2024-01-01"
@@ -68,7 +68,7 @@ date: "2024-01-01"
 
 # My Cool Project
 
-This is a description of one of my projects. Add more `.md` files in the `projects/content/` directory to showcase your work.
+This is a description of one of my projects. Add more `.md` files in the `projects/` directory to showcase your work.
 
 ## What I Built
 

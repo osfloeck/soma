@@ -16,12 +16,18 @@ import yaml
 import shutil
 from halo import Halo
 from typing import TypedDict, List
+from enum import Enum
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 from datetime import datetime
 from dateutil.parser import parse as parse_date
 from .templates import DEFAULT_TEMPLATES
-from .content import DEFAULT_CONTENT
+from .preset import DEFAULT_CONTENT
+
+class ProcessMode(Enum):
+    ROOT_PAGE = 0
+    CAT_PAGE = 1
+    CAT_INDEX = 2
 
 class MakdownPageBase(TypedDict):
     title: str
@@ -32,42 +38,30 @@ class MarkdownPage(MakdownPageBase, total=False):
     date: datetime
     tags: List[str]
     categories: List[str]
-    items: List[dict]
-    parent_category: str  
 
-def init(name):
-    """Initialise project structure."""
-    
+def init(name: str):
+    """Initialise project structure"""
     # Check if dir exists
     site_path = Path(name)
     if site_path.exists():
         print(f"Error: Directory `{name}` already exists!")
         return
 
-    # Create directory structure
+    # Create site structure
     site_path.mkdir()
-
-    # Essential directories
     (site_path / "templates").mkdir()
     (site_path / "build").mkdir()    
     
     # Non-Essential (Dummy) directories
     (site_path / "blog").mkdir()
-    (site_path / "blog" / "content").mkdir()
     (site_path / "projects").mkdir()
-    (site_path / "projects" / "content").mkdir()
     
-    # Init default templates
-    print("soma: Init default templates..")
+    # Init defaults
     create_default_templates(site_path / "templates")
-    
-    # Init dummy content
-    print("soma: Init dummy content..")
     create_default_content(site_path)
     
     print(f"New soma instance `{name}` created!")
     print(f"Run `soma --help` to get started")
-    # Remember to CD into new project
     
 def create_default_templates(templates_dir: Path):
     """Create default HTML templates"""
@@ -83,8 +77,7 @@ def create_default_content(site_path: Path):
             f.write(content)
 
 def build():
-    print("soma (debug): Building site...")
-    
+    """Build site"""
     # Clear build contents
     if Path("build").exists():
         shutil.rmtree(Path("build"))
@@ -92,83 +85,102 @@ def build():
     
     env = Environment(loader=FileSystemLoader('templates'))
     
-    # Check for index.md (home page) in root dir 
-    root_path = Path("index.md")
-    if not root_path.exists():
-        print("Error: No index.md found in root directory!")
-        print("To fix, please ensure index.md exists in root directory.")
-        return
+    # Process items at root (e.g., index.md, about.md)
+    root_items = discover_root_items()
+    for item in root_items:
+        process_page(env, item, ProcessMode.ROOT_PAGE)
     
-    # Process home
-    process_page(env, root_path)
-    
-    # Discover content directories
-    content_dirs = discover_content()
-    
-    # Process content
-    for content_dir in content_dirs:
-        process_content_dir(env, content_dir)
+    # Process content in category
+    category_dirs = discover_content()
+    for category_dir in category_dirs:
+        process_category_dir(env, category_dir)
 
 def discover_content() -> list[Path]:
-    """Discover all directories that might contain content"""
+    """Discover directories (categories) that might contain content"""
     exclude = ['templates', 'build']
     content_dirs: list[Path] = []
     
-    # Any folders found (that contain a content dir & an index.md) is a category
-    p = Path('.')
-    for directory in p.iterdir(): 
-        if directory.is_dir() and directory.name not in exclude:
-            has_content = (directory / 'content').is_dir()
-            has_index = (directory / 'index.md').is_file()
-            
-            if not (has_content and has_index):
-                print(f"soma (debug): Either content or index.md not present in {directory.name}!")
-            else:
-                content_dirs.append(directory)
-                print(f"soma (debug): {directory.name} OK")  
-    
+    # Any folders found that contain index.md is a category
+    for directory in Path(".").iterdir(): 
+        if not directory.is_dir():
+            continue
+        if directory.name.startswith("."):
+            continue
+        if directory.name in exclude:
+            continue
+        
+        has_index_file = (directory / 'index.md').is_file()
+        
+        if has_index_file:
+            content_dirs.append(directory)
+            print(f"soma (info): {directory.name} OK")
+        else:
+            print(f"soma (warn): `index.md` not present in {directory.name}!")  
+        
     return content_dirs
 
-def process_content_dir(env: Environment, content_dir: Path):
-    """Process multiple markdown pages in a single dir"""
+def discover_root_items() -> list[Path]:
+    """Discover markdown content in root"""
+    root_items: list[Path] = []
     
-    for md_file in content_dir.glob("**/*.md"):
-        process_page(env, md_file)
+     # Check for index.md in root
+    root_path = Path("index.md")
+    if not root_path.exists():
+        print("soma (error): No index.md found in root directory!")
     
-    return
+    # Other items in root
+    root_path = Path(".")
+    for item in root_path.glob("*.md"):
+        root_items.append(item)
+    
+    return root_items
 
-def process_page(env: Environment, md_file_path: Path):
+def process_category_dir(env: Environment, category_dir: Path):
+    """Process markdown pages in a category dir"""
+    for md_file in category_dir.glob("*.md"):
+        if md_file.name == "index.md":
+            process_page(env, md_file, ProcessMode.CAT_INDEX)
+        else:
+            process_page(env, md_file, ProcessMode.CAT_PAGE)
+    
+def process_page(env: Environment, md_file_path: Path, mode: ProcessMode):
     """Process a single markdown page"""
     
-    if md_file_path.name.startswith("_"):
-        print(f"soma (debug): Skipping draft {md_file_path}")
+    if md_file_path.name.startswith(("_", ".")):
+        print(f"soma (info): Skipping draft/hidden {md_file_path}")
         return
     
     try:
         # Parse frontmatter & content
-        data: MarkdownPage = parse_md(md_file_path)
-        template_name = str(data.get('template')) + ".html"
+        context: MarkdownPage = parse_md(md_file_path)
+        extras = {}
         
+        template_name = str(context.get('template')) + ".html"
         if template_name is None:
             raise ValueError(f"Error: Unable to extract template for {md_file_path}!")
         
         # Case for category index page
-        if md_file_path.name == "index.md" and template_name == "category.html":
-            content_dir = md_file_path.parent / "content"
+        if mode == ProcessMode.CAT_INDEX:
+            content_dir = md_file_path.parent
             items = collect_items(content_dir, md_file_path.parent.name)
-            data['items'] = items
+            extras['items'] = items
         
         # Case for content item page
-        if template_name == "content.html":
-            data['parent_category'] = md_file_path.parent.parent.name
+        if mode == ProcessMode.CAT_PAGE:
+            extras['category_name'] = md_file_path.parent.name
+            print(f"extras after setting: {extras}")
         
         # Render with template
         template = env.get_template(template_name)
-        html_content = template.render(**data)
+        print(f"{md_file_path} - {mode} - {extras} - {context}")
+        html_content = template.render(**context, **extras)
         
         # Build path
         md_file_path = md_file_path.with_suffix('.html')
-        build_path: Path = Path("build") / md_file_path
+        if str(md_file_path.name) == "index.html":
+            build_path: Path = Path("build") / md_file_path
+        else:
+            build_path: Path = Path("build") / md_file_path.parent / md_file_path.stem / "index.html"  
 
         # Create directory
         build_dir = build_path.parent
@@ -184,14 +196,16 @@ def process_page(env: Environment, md_file_path: Path):
         print(f"Error processing {md_file_path}: {e}")
 
 def collect_items(content_dir: Path, category_name: str) -> List[dict]:
-    
+    """Collects items found in a category directory"""
     items = []
     
     for md_file in content_dir.glob("*.md"):
+        if md_file.name == "index.md":
+            continue
         
         try:
             item_data: MarkdownPage = parse_md(md_file)
-            item_url = f"/{category_name}/content/{md_file.stem}.html"
+            item_url = f"/{category_name}/{md_file.stem}"
             items.append({
                 'title': item_data['title'],
                 'url': item_url,
@@ -224,6 +238,10 @@ def parse_md(file_path: Path) -> MarkdownPage:
     except yaml.YAMLError as e:
         raise ValueError(f"Invalid YAML frontmatter in {file_path}: {e}")
 
+    for field in req_frontmatter_fields:
+        if field not in frontmatter:
+            raise ValueError(f"Missing required frontmatter field `{field}` in {file_path}")
+    
     # Content processing
     html_content = markdown.markdown(parts[2])
     
@@ -234,11 +252,6 @@ def parse_md(file_path: Path) -> MarkdownPage:
         'content': html_content
     }
 
-    # Check fields
-    for field in req_frontmatter_fields:
-        if field not in frontmatter:
-            raise ValueError(f"Missing required frontmatter field `{field}` in {file_path}")
-    
     # Optional fields
     if 'date' in frontmatter:
         try:
@@ -252,7 +265,7 @@ def parse_md(file_path: Path) -> MarkdownPage:
         
     return page
     
-def serve(port):
+def serve(port, dev):
     """Serve the static site"""
     
     build_dir = Path("build")
@@ -269,6 +282,7 @@ def serve(port):
     
     # Set up HTTP server
     Handler = http.server.SimpleHTTPRequestHandler
+    httpd = None
     
     try:
         with socketserver.TCPServer(("", port), Handler) as httpd:
@@ -284,7 +298,12 @@ def serve(port):
     except KeyboardInterrupt:
         print("\n✓ Server stopped")
     finally:
+        # Ensure server is properly shut down
+        if httpd:
+            httpd.shutdown()
+            httpd.server_close()
         os.chdir(original_dir)
+        print(f"✓ Port {port} freed, back in {original_dir}")
 
 def clean():
     print("Cleaning build directory...")

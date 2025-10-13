@@ -1,7 +1,7 @@
 '''
 templates.py
 
-Default template definitions for new sites
+Default templates for new sites
 
 Author: Oskar Floeck
 Date: 12-09-2025
@@ -34,8 +34,8 @@ BASE_TEMPLATE = '''<!DOCTYPE html>
 </body>
 </html>'''
 
-# Home Template: Landing page
-HOME_TEMPLATE = '''{% extends "base.html" %}
+# Default Template: e.g. Landing page, About, Contact..
+DEFAULT_TEMPLATE = '''{% extends "base.html" %}
 {% block content %}
 <h1>{{ title }}</h1>
 {{ content | safe }}
@@ -60,12 +60,12 @@ CONTENT_TEMPLATE = '''{% extends "base.html" %}
 <h1>{{ title }}</h1>
 <p><em>{{ date }}</em></p>
 {{ content | safe }}
-<p><a href="/{{parent_category}}/">← Back to Category</a></p>
+<p><a href="/{{category_name}}/">← Back to Category</a></p>
 {% endblock %}'''
 
 DEFAULT_TEMPLATES = {
     'base.html': BASE_TEMPLATE,
-    'home.html': HOME_TEMPLATE,
+    'default.html': DEFAULT_TEMPLATE,
     'category.html': CATEGORY_TEMPLATE,
     'content.html': CONTENT_TEMPLATE,
 }
