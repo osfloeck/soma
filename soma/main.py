@@ -14,6 +14,7 @@ import socketserver
 import os
 import yaml
 import shutil
+import importlib.resources as resources
 from halo import Halo
 from typing import TypedDict, List
 from enum import Enum
@@ -22,7 +23,8 @@ from jinja2 import Environment, FileSystemLoader
 from datetime import datetime
 from dateutil.parser import parse as parse_date
 from .templates import DEFAULT_TEMPLATES
-from .preset import DEFAULT_CONTENT
+from .seed import DEFAULT_CONTENT
+from .assets import DEFAULT_ASSETS
 
 class ProcessMode(Enum):
     ROOT_PAGE = 0
@@ -41,7 +43,6 @@ class MarkdownPage(MakdownPageBase, total=False):
 
 def init(name: str):
     """Initialise project structure"""
-    # Check if dir exists
     site_path = Path(name)
     if site_path.exists():
         print(f"Error: Directory `{name}` already exists!")
@@ -50,23 +51,28 @@ def init(name: str):
     # Create site structure
     site_path.mkdir()
     (site_path / "templates").mkdir()
-    (site_path / "build").mkdir()    
+    (site_path / "build").mkdir()
+    (site_path / "assets").mkdir()
+    (site_path / "assets" / "css").mkdir()
+    (site_path / "assets" / "fonts").mkdir()  
     
-    # Non-Essential (Dummy) directories
+    # Content directories
     (site_path / "blog").mkdir()
     (site_path / "projects").mkdir()
     
     # Init defaults
     create_default_templates(site_path / "templates")
     create_default_content(site_path)
+    create_default_assets(site_path / "assets")
+    copy_default_fonts(site_path / "assets" / "fonts")
     
     print(f"New soma instance `{name}` created!")
     print(f"Run `soma --help` to get started")
     
 def create_default_templates(templates_dir: Path):
     """Create default HTML templates"""
-    for filename, content in DEFAULT_TEMPLATES.items():
-        with open(templates_dir / filename, 'w') as f:
+    for template, content in DEFAULT_TEMPLATES.items():
+        with open(templates_dir / template, 'w') as f:
             f.write(content)
 
 def create_default_content(site_path: Path):
@@ -76,12 +82,31 @@ def create_default_content(site_path: Path):
         with open(full_path, 'w') as f:
             f.write(content)
 
+def create_default_assets(asset_path: Path):
+    """Create default assets"""
+    for file_path, content in DEFAULT_ASSETS.items():
+        with open(asset_path / file_path, 'w') as f:
+            f.write(content)
+    
+def copy_default_fonts(font_path: Path):
+    """Copy default fonts from package"""
+    try:
+        with resources.as_file(resources.files('soma.fonts')) as font_dir:
+            for font in font_dir.iterdir():
+                if font.is_file():
+                    shutil.copy(font, font_path / font.name)
+    except Exception as e:
+        print(f"soma (error: {e}")
+
 def build():
     """Build site"""
     # Clear build contents
     if Path("build").exists():
         shutil.rmtree(Path("build"))
         Path("build").mkdir()
+    
+    # Copy over assets to build
+    build_assets()
     
     env = Environment(loader=FileSystemLoader('templates'))
     
@@ -95,9 +120,20 @@ def build():
     for category_dir in category_dirs:
         process_category_dir(env, category_dir)
 
+def build_assets():
+    """Copy over assets from site to build"""
+    assets_dir: Path = Path("assets")
+    assets_build_dir: Path = Path("build") / "assets"
+    
+    if not assets_dir.exists():
+        print("soma (error): No assets found in site!")
+        return
+    shutil.copytree(assets_dir, assets_build_dir)
+    print(f"soma (info): Copied assets to build")
+    
 def discover_content() -> list[Path]:
     """Discover directories (categories) that might contain content"""
-    exclude = ['templates', 'build']
+    exclude = ['templates', 'build', 'assets']
     content_dirs: list[Path] = []
     
     # Any folders found that contain index.md is a category
@@ -168,11 +204,9 @@ def process_page(env: Environment, md_file_path: Path, mode: ProcessMode):
         # Case for content item page
         if mode == ProcessMode.CAT_PAGE:
             extras['category_name'] = md_file_path.parent.name
-            print(f"extras after setting: {extras}")
         
         # Render with template
         template = env.get_template(template_name)
-        print(f"{md_file_path} - {mode} - {extras} - {context}")
         html_content = template.render(**context, **extras)
         
         # Build path
