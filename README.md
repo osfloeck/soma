@@ -18,16 +18,16 @@ soma init --name mysite
 soma serve
 ```
 
-## Usage & Features
+## Usage & features
 Any folders added are recognised as categories, and content placed therin automatically processed as long as a few basic rules are followed.
 
 1. The root dir of the project contains an index.md. This is your landing page. You are free to add additional pages such as about.md within this dir.
 
-2. Category folders (placed within the root dir) contain an index.md which serve as the index page for the category and will collate all items for that category.
+2. Category folders (placed within the root dir) contain an index.md which serve as the index page for the category and will collate all items for that category (accessable in items as seen in the template).
 
-3. Each markdownfile contains a title, template and some content. Dates, tags and categories are optional.
+3. Each markdownfile contains a title, template and some content. Content files require a date. Tags and categories are optional.
 
-### Example Folder Layout
+### Example folder layout
 
 Below is an example of what your layout may look like before building.
 
@@ -35,7 +35,9 @@ Below is an example of what your layout may look like before building.
 // UPDATE WITH STYLES AND FONT
 ```
 
-## Coming soon (10 years later)..
-- Better config settings (probably not going to happen)
+## Coming soon
+- Search & pagination
+- Tailwind support
+- Better config
 - Commands `new category` & `new item`
 - Support for themes

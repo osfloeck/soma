@@ -30,12 +30,12 @@ title: "About"
 template: "default"
 ---
 
-I am a brand new site. I have nothing else to add.
+This is where you can really sell yourself.
 
-## Other facts
+### Facts
 
-- Pineapple is fine on pizza
 - Frozen grapes are rather nice
+- 
 - Decaf is not quite there yet
 ''',
 

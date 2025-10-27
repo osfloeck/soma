@@ -16,7 +16,7 @@ import yaml
 import shutil
 import importlib.resources as resources
 from halo import Halo
-from typing import TypedDict, List
+from typing import TypedDict, List, Required, NotRequired, Union
 from enum import Enum
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
@@ -31,15 +31,15 @@ class ProcessMode(Enum):
     CAT_PAGE = 1
     CAT_INDEX = 2
 
-class MakdownPageBase(TypedDict):
+class MarkdownPageBase(TypedDict):
     title: str
     template: str
     content: str
 
-class MarkdownPage(MakdownPageBase, total=False):
-    date: datetime
-    tags: List[str]
-    categories: List[str]
+class ContentPage(MarkdownPageBase):
+    date: Required[datetime]
+    tags: NotRequired[List[str]]
+    categories: NotRequired[List[str]]
 
 def init(name: str):
     """Initialise project structure"""
@@ -110,10 +110,18 @@ def build():
     
     env = Environment(loader=FileSystemLoader('templates'))
     
+    def format_date(date_obj):
+        """Format datetime e.g. 'Saturday, 19th Oct, 2025'"""
+        day = date_obj.day
+        suffix = 'th' if 11 <= day <= 13 else {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
+        return date_obj.strftime(f"%A, {day}{suffix} %b, %Y")
+    
+    env.filters['format_date'] = format_date
+    
     # Process items at root (e.g., index.md, about.md)
     root_items = discover_root_items()
     for item in root_items:
-        process_page(env, item, ProcessMode.ROOT_PAGE)
+        render_page(env, item, ProcessMode.ROOT_PAGE)
     
     # Process content in category
     category_dirs = discover_content()
@@ -175,11 +183,11 @@ def process_category_dir(env: Environment, category_dir: Path):
     """Process markdown pages in a category dir"""
     for md_file in category_dir.glob("*.md"):
         if md_file.name == "index.md":
-            process_page(env, md_file, ProcessMode.CAT_INDEX)
+            render_page(env, md_file, ProcessMode.CAT_INDEX)
         else:
-            process_page(env, md_file, ProcessMode.CAT_PAGE)
+            render_page(env, md_file, ProcessMode.CAT_PAGE)
     
-def process_page(env: Environment, md_file_path: Path, mode: ProcessMode):
+def render_page(env: Environment, md_file_path: Path, mode: ProcessMode):
     """Process a single markdown page"""
     
     if md_file_path.name.startswith(("_", ".")):
@@ -188,20 +196,25 @@ def process_page(env: Environment, md_file_path: Path, mode: ProcessMode):
     
     try:
         # Parse frontmatter & content
-        context: MarkdownPage = parse_md(md_file_path)
+        context: Union[ContentPage, MarkdownPageBase]    
         extras = {}
+
+        if mode == ProcessMode.CAT_PAGE:
+            context = parse_md(md_file_path, mode)
+        else:
+            context = parse_md(md_file_path, mode)
         
         template_name = str(context.get('template')) + ".html"
         if template_name is None:
             raise ValueError(f"Error: Unable to extract template for {md_file_path}!")
         
-        # Case for category index page
+        # Category index page
         if mode == ProcessMode.CAT_INDEX:
             content_dir = md_file_path.parent
             items = collect_items(content_dir, md_file_path.parent.name)
             extras['items'] = items
         
-        # Case for content item page
+        # Content item page
         if mode == ProcessMode.CAT_PAGE:
             extras['category_name'] = md_file_path.parent.name
         
@@ -229,7 +242,7 @@ def process_page(env: Environment, md_file_path: Path, mode: ProcessMode):
     except Exception as e:
         print(f"Error processing {md_file_path}: {e}")
 
-def collect_items(content_dir: Path, category_name: str) -> List[dict]:
+def collect_items(content_dir: Path, category_name: str) -> List[ContentPage]:
     """Collects items found in a category directory"""
     items = []
     
@@ -238,28 +251,30 @@ def collect_items(content_dir: Path, category_name: str) -> List[dict]:
             continue
         
         try:
-            item_data: MarkdownPage = parse_md(md_file)
+            item_data = parse_md(md_file, ProcessMode.CAT_PAGE)
+            if 'date' not in item_data:
+                raise ValueError(f"soma (err): Expected date field in {md_file}")
             item_url = f"/{category_name}/{md_file.stem}"
             items.append({
                 'title': item_data['title'],
                 'url': item_url,
-                'date': item_data.get('date', 'No date')
+                'date': item_data['date'].strftime((f"%d/%m/%Y"))
             })
         except Exception as e:
             print(f"Warning: Could not collect {md_file}: {e}")
-    
+            
+    items.sort(key = lambda item: item['date'], reverse=True)    
     return items
 
-def parse_md(file_path: Path) -> MarkdownPage:
+def parse_md(file_path: Path, mode: ProcessMode) -> Union[MarkdownPageBase, ContentPage]:
     """Parse markdowd file with YAML frontmatter"""
     with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
+    if not content.startswith('---'):
+        raise ValueError(f"Missing frontmatter in {file_path}")
     
     req_frontmatter_fields = ['title', 'template']
     frontmatter = {}
-    
-    if not content.startswith('---'):
-        raise ValueError(f"Missing frontmatter in {file_path}")
     
     # Break up md file (parts -> ['', 'frontmatter', 'content'])
     parts = content.split('---', 2)
@@ -277,27 +292,32 @@ def parse_md(file_path: Path) -> MarkdownPage:
             raise ValueError(f"Missing required frontmatter field `{field}` in {file_path}")
     
     # Content processing
-    html_content = markdown.markdown(parts[2])
+    html_content = markdown.markdown(parts[2], extensions=[
+        'fenced_code',
+        'codehilite',
+        'tables'  
+    ])
     
     # Prepare return
-    page: MarkdownPage = {
-        'title': frontmatter['title'],
-        'template': frontmatter['template'],
-        'content': html_content
-    }
-
-    # Optional fields
-    if 'date' in frontmatter:
-        try:
-            page['date'] = parse_date(frontmatter['date'])
-        except Exception as e:
-            raise ValueError(f"Invalid date format in {file_path}: {frontmatter['date']}")
-    if 'tags' in frontmatter:
-        page['tags'] = frontmatter['tags']
-    if 'categories' in frontmatter:
-        page['categories'] = frontmatter['categories']
-        
-    return page
+    if mode == ProcessMode.CAT_PAGE: 
+        cat_page: ContentPage = {
+            'title': frontmatter['title'],
+            'template': frontmatter['template'],
+            'content': html_content,
+            'date': parse_date(frontmatter['date'])
+        }
+        if 'tags' in frontmatter:
+            cat_page['tags'] = frontmatter['tags']
+        if 'categories' in frontmatter:
+            cat_page['categories'] = frontmatter['categories']        
+        return cat_page
+    else:
+        page: MarkdownPageBase = {
+                'title': frontmatter['title'],
+                'template': frontmatter['template'],
+                'content': html_content
+            }
+        return page
     
 def serve(port, dev):
     """Serve the static site"""
