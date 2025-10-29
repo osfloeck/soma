@@ -292,11 +292,20 @@ def parse_md(file_path: Path, mode: ProcessMode) -> Union[MarkdownPageBase, Cont
             raise ValueError(f"Missing required frontmatter field `{field}` in {file_path}")
     
     # Content processing
-    html_content = markdown.markdown(parts[2], extensions=[
-        'fenced_code',
-        'codehilite',
-        'tables'  
-    ])
+    html_content = markdown.markdown(
+        parts[2], 
+        extensions=[
+            'fenced_code',
+            'codehilite',
+            'tables'
+        ], 
+        extension_configs={ 
+            'codehilite': {
+                'linenums': True,
+                'use_pygments': True
+            }
+        }
+    )
     
     # Prepare return
     if mode == ProcessMode.CAT_PAGE: 
