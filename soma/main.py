@@ -15,6 +15,7 @@ import os
 import yaml
 import shutil
 import importlib.resources as resources
+import watchdog
 from halo import Halo
 from typing import TypedDict, List, Required, NotRequired, Union
 from enum import Enum
@@ -330,43 +331,26 @@ def parse_md(file_path: Path, mode: ProcessMode) -> Union[MarkdownPageBase, Cont
     
 def serve(port, dev):
     """Serve the static site"""
-    
     build_dir = Path("build")
     
-    # Check if build exists
     if not build_dir.exists():
-        print("Error: build/ directory doesn't exist!")
-        print("Run `soma build` first to generate the site.")
+        print("Build directory not found! Run build first.")
         return
     
-    # Change to build directory for server
-    original_dir = os.getcwd()
-    os.chdir(build_dir)
-    
-    # Set up HTTP server
-    Handler = http.server.SimpleHTTPRequestHandler
-    httpd = None
+    # Set correct dir for handler
+    Handler = partial(
+        http.server.SimpleHTTPRequestHandler,
+        directory=str(build_dir.absolute())
+    )
     
     try:
-        with socketserver.TCPServer(("", port), Handler) as httpd:
-            print(f"✓ Serving site at http://localhost:{port}")
-            print("Press Ctrl+C to stop the server")
-            httpd.serve_forever()
-    except OSError as e:
-        if e.errno == 48 or e.errno == 98:  # Address already in use
-            print(f"Error: Port {port} is already in use!")
-            print("Try a different port with --port <number>")
-        else:
-            print(f"Error starting server: {e}")
+        with http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler) as server:
+            print(f"Serving at http://localhost:{port}")
+            server.serve_forever()
     except KeyboardInterrupt:
-        print("\n✓ Server stopped")
-    finally:
-        # Ensure server is properly shut down
-        if httpd:
-            httpd.shutdown()
-            httpd.server_close()
-        os.chdir(original_dir)
-        print(f"✓ Port {port} freed, back in {original_dir}")
+        print("\nServer stopped")
+    except OSError as e:
+        print(f"Port {port} busy: {e}")
 
 def clean():
     print("Cleaning build directory...")
