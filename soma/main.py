@@ -9,16 +9,15 @@ License: MIT
 '''
 
 import markdown
+import time
 import http.server
-import socketserver
-import os
 import yaml
 import shutil
 import importlib.resources as resources
-import watchdog
-from halo import Halo
-from typing import TypedDict, List, Required, NotRequired, Union
-from enum import Enum
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+from typing import Any, TypedDict, List, Required, NotRequired, Union
+from enum import Enum, auto
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 from datetime import datetime
@@ -26,11 +25,12 @@ from dateutil.parser import parse as parse_date
 from .templates import DEFAULT_TEMPLATES
 from .seed import DEFAULT_CONTENT
 from .assets import DEFAULT_ASSETS
+from .build_utils import generate_build_hash, save_build_info, load_build_info, INJECT_SCRIPT
 
 class ProcessMode(Enum):
-    ROOT_PAGE = 0
-    CAT_PAGE = 1
-    CAT_INDEX = 2
+    ROOT_PAGE = auto()
+    CAT_PAGE = auto()
+    CAT_INDEX = auto()
 
 class MarkdownPageBase(TypedDict):
     title: str
@@ -79,8 +79,7 @@ def create_default_templates(templates_dir: Path):
 def create_default_content(site_path: Path):
     """Create default markdown content"""
     for file_path, content in DEFAULT_CONTENT.items():
-        full_path = site_path / file_path
-        with open(full_path, 'w') as f:
+        with open(site_path / file_path, 'w') as f:
             f.write(content)
 
 def create_default_assets(asset_path: Path):
@@ -99,18 +98,23 @@ def copy_default_fonts(font_path: Path):
     except Exception as e:
         print(f"soma (error: {e}")
 
-def build():
-    """Build site"""
+def build(dev_mode: bool = False):
+    """Build site"""    
     # Clear build contents
     if Path("build").exists():
         shutil.rmtree(Path("build"))
         Path("build").mkdir()
+    
+    # Generate build hash
+    build_hash = generate_build_hash()
+    save_build_info(Path("build"), build_hash)
     
     # Copy over assets to build
     build_assets()
     
     env = Environment(loader=FileSystemLoader('templates'))
     
+    # Provides a function for templates to format dates
     def format_date(date_obj):
         """Format datetime e.g. 'Saturday, 19th Oct, 2025'"""
         day = date_obj.day
@@ -120,15 +124,13 @@ def build():
     env.filters['format_date'] = format_date
     
     # Process items at root (e.g., index.md, about.md)
-    root_items = discover_root_items()
-    for item in root_items:
-        render_page(env, item, ProcessMode.ROOT_PAGE)
+    for item in discover_root_items():
+        render_page(env, item, ProcessMode.ROOT_PAGE, dev_mode, build_hash)
     
     # Process content in category
-    category_dirs = discover_content()
-    for category_dir in category_dirs:
-        process_category_dir(env, category_dir)
-
+    for category_dir in discover_content():
+        process_category_dir(env, category_dir, dev_mode, build_hash)
+    
 def build_assets():
     """Copy over assets from site to build"""
     assets_dir: Path = Path("assets")
@@ -138,7 +140,6 @@ def build_assets():
         print("soma (error): No assets found in site!")
         return
     shutil.copytree(assets_dir, assets_build_dir)
-    print(f"soma (info): Copied assets to build")
     
 def discover_content() -> list[Path]:
     """Discover directories (categories) that might contain content"""
@@ -180,15 +181,15 @@ def discover_root_items() -> list[Path]:
     
     return root_items
 
-def process_category_dir(env: Environment, category_dir: Path):
+def process_category_dir(env: Environment, category_dir: Path, dev_mode: bool = False, build_hash: str = ""):
     """Process markdown pages in a category dir"""
     for md_file in category_dir.glob("*.md"):
         if md_file.name == "index.md":
-            render_page(env, md_file, ProcessMode.CAT_INDEX)
+            render_page(env, md_file, ProcessMode.CAT_INDEX, dev_mode, build_hash)
         else:
-            render_page(env, md_file, ProcessMode.CAT_PAGE)
+            render_page(env, md_file, ProcessMode.CAT_PAGE, dev_mode, build_hash)
     
-def render_page(env: Environment, md_file_path: Path, mode: ProcessMode):
+def render_page(env: Environment, md_file_path: Path, process_mode: ProcessMode, dev_mode: bool = False, build_hash: str = ""):
     """Process a single markdown page"""
     
     if md_file_path.name.startswith(("_", ".")):
@@ -197,26 +198,26 @@ def render_page(env: Environment, md_file_path: Path, mode: ProcessMode):
     
     try:
         # Parse frontmatter & content
-        context: Union[ContentPage, MarkdownPageBase]    
-        extras = {}
-
-        if mode == ProcessMode.CAT_PAGE:
-            context = parse_md(md_file_path, mode)
-        else:
-            context = parse_md(md_file_path, mode)
+        context: Union[ContentPage, MarkdownPageBase] = parse_md(md_file_path, process_mode)
+                
+        # Add build timestamp to page
+        extras: dict[str, Any] = {
+            'build_hash': build_hash,
+            'dev_mode': dev_mode,
+            'inject_script': INJECT_SCRIPT
+            }
         
+        # Extract template from file
         template_name = str(context.get('template')) + ".html"
         if template_name is None:
             raise ValueError(f"Error: Unable to extract template for {md_file_path}!")
         
         # Category index page
-        if mode == ProcessMode.CAT_INDEX:
-            content_dir = md_file_path.parent
-            items = collect_items(content_dir, md_file_path.parent.name)
-            extras['items'] = items
+        if process_mode == ProcessMode.CAT_INDEX:
+            extras['items'] = collect_items(md_file_path.parent, md_file_path.parent.name)
         
         # Content item page
-        if mode == ProcessMode.CAT_PAGE:
+        if process_mode == ProcessMode.CAT_PAGE:
             extras['category_name'] = md_file_path.parent.name
         
         # Render with template
@@ -237,9 +238,7 @@ def render_page(env: Environment, md_file_path: Path, mode: ProcessMode):
         # Write file
         with open(build_path, 'w') as f:
             f.write(html_content)
-        
-        print(f"  → Built: {build_path}")
-        
+                    
     except Exception as e:
         print(f"Error processing {md_file_path}: {e}")
 
@@ -333,18 +332,76 @@ def serve(port, dev):
     """Serve the static site"""
     build_dir = Path("build")
     
+    # Check build exists
     if not build_dir.exists():
-        print("Build directory not found! Run build first.")
+        print("soma (error): Build directory not found! Run build first")
         return
     
-    # Set correct dir for handler
-    Handler = partial(
-        http.server.SimpleHTTPRequestHandler,
-        directory=str(build_dir.absolute())
-    )
+    # Load and display current build info
+    build_info = load_build_info(build_dir)
+    print(f"soma (info): Build hash: {build_info.get('hash', 'unknown')}")
+    print(f"soma (info): Build time: {build_info.get('timestamp', 'unknown')}")
     
+    # If dev, build with dev_mode for script injection
+    if dev:
+        build(dev_mode = True)
+    
+    # Handler for our HTTP server
+    class HTTPHandler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(build_dir), **kwargs)
+    
+        # Silent logs for retrieving build info
+        def log_message(self, format, *args):
+            if hasattr(self, 'path') and '.build-info.json' in self.path:
+                return
+            super().log_message(format, *args)
+    
+        # Disable caching in dev
+        def end_headers(self):
+            if dev:
+                self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+                self.send_header('Expires', '0')
+            super().end_headers()
+        
+    # Handler for watchdog
+    class WatchdogHandler(FileSystemEventHandler):
+        def __init__(self):
+            self.last_build = 0
+        
+        def on_any_event(self, event):
+            if event.is_directory:
+                return
+            
+            path = Path(str(event.src_path))
+            
+            # Ignore paths & file suffix requirements
+            if 'build' in path.parts or path.name.startswith('.'):
+                return
+            
+            if not (path.suffix in ['.md', '.html', '.css']):
+                return
+            
+            if event.event_type in ['modified', 'created', 'deleted']:
+                current_time = time.time()
+                
+                # Debounce 1s
+                if current_time - self.last_build > 1:
+                    print(f"soma (info): Change detected: {path}")
+                    print(f"Rebuilding...")
+                    build(dev_mode = True)
+                    self.last_build = current_time
+                else:
+                    print("Too fast! Debounced")
+    
+    if dev:
+        observer = Observer()
+        observer.schedule(WatchdogHandler(), ".", recursive=True)
+        observer.start()
+        print("Watch mode enabled - auto-rebuilding on changes")
+        
     try:
-        with http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler) as server:
+        with http.server.ThreadingHTTPServer(("127.0.0.1", port), HTTPHandler) as server:
             print(f"Serving at http://localhost:{port}")
             server.serve_forever()
     except KeyboardInterrupt:

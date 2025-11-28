@@ -12,6 +12,7 @@ License: MIT
 BASE_TEMPLATE = '''<!DOCTYPE html>
 <html lang="en">
 <head>
+    <meta name="build-hash" content="{{ build_hash }}">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
@@ -28,6 +29,11 @@ BASE_TEMPLATE = '''<!DOCTYPE html>
     <div class="content">
         {% block content %} {% endblock %}
     </div>
+    {% if dev_mode %}
+    <script>
+        {{ inject_script | safe }}
+    </script>
+    {% endif %}
 </body>
 </html>'''
 
