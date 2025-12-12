@@ -52,7 +52,7 @@ CATEGORY_TEMPLATE = '''{% extends "base.html" %}
 <h2>Recent Content</h2>
 <ul>
 {% for item in items %}
-    <li><a href="{{ item.url }}">{{ item.title }}</a> - {{ item.date }}</li>
+    <li><a href="{{ item.url }}">{{ item.title }}</a> - {{ item.date | format_date }}</li>
 {% endfor %}
 </ul>
 {% endblock %}'''
@@ -61,7 +61,7 @@ CATEGORY_TEMPLATE = '''{% extends "base.html" %}
 CONTENT_TEMPLATE = '''{% extends "base.html" %}
 {% block content %}
 <h1>{{ title }}</h1>
-<p><time datetime="{{ date.isoformat() }}">{{ date | format_date }}</time></p>
+<p><time datetime="{{ date }}">{{ date | format_date }}</time></p>
 {{ content | safe }}
 {% endblock %}'''
 

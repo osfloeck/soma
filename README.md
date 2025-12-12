@@ -51,7 +51,7 @@ Any folders added are recognised as categories, and content placed therin automa
 
 2. Category folders (placed within the root dir) contain an index.md which serve as the index page for the category and will collate all items for that category (accessible in items as seen in the template).
 
-3. Each markdownfile contains a title, template and some content. Content files require a date. Tags and categories are optional.
+3. Each markdownfile contains a title, template and some content. Other frontmatter such as Tags and Categories can be added and accessed in the templates.
 
 ### Example folder layout
 
@@ -82,6 +82,39 @@ new-soma/
 │   └── default.html
 ├── about.md
 └── index.md
+```
+
+### Template example
+
+Below is an example of a customised template to extract frontmatter fields such as tags.
+
+```
+{% extends "base.html" %}
+{% block content %}
+
+<h1>{{ title }}</h1>
+{{ content | safe }}
+
+<div class="projects">
+    {% for item in items %}
+    <div class="project" style="margin-bottom: 1rem;">
+        <a class="project-title" href="{{ item.url }}">{{ item.title }}</a>
+
+    {% if item.description %}
+    <div class="project-description">{{ item.description }}</div>
+    {% endif %}
+
+    {% if item.tags %}
+    <div class="project-tags">
+        {% for tag in item.tags %}
+        <span class="tag">#{{ tag }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+{% endfor %}
+
+{% endblock %}
 ```
 
 ## Coming soon
