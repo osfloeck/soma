@@ -31,11 +31,6 @@ class ProcessMode(Enum):
     CAT_PAGE = auto()
     CAT_INDEX = auto()
 
-class MarkdownPageBase(TypedDict):
-    title: str
-    template: str
-    content: str
-
 def init(name: str):
     """Initialise project structure"""
     site_path = Path(name)
@@ -109,13 +104,14 @@ def build(dev_mode: bool = False):
     env = Environment(loader=FileSystemLoader('templates'))
     
     # Provides a function for templates to format dates
-    def format_date(date_obj):
+    def format_date(date_obj: datetime):
         """Format datetime e.g. '21st January, 2025'"""
+        weekday = date_obj.strftime('%A')
         day = date_obj.day
         suffix = 'th' if 11 <= day <= 13 else {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
         month = date_obj.strftime('%B')
         year = date_obj.year
-        return f"{day}{suffix} {month}, {year}"
+        return f"{weekday}, {day}{suffix} {month}, {year}"
     
     env.filters['format_date'] = format_date
     
@@ -180,10 +176,16 @@ def discover_root_items() -> list[Path]:
 def process_category_dir(env: Environment, category_dir: Path, dev_mode: bool = False, build_hash: str = ""):
     """Process markdown pages in a category dir"""
     for md_file in category_dir.glob("*.md"):
+
+        if md_file.name.startswith("_"):
+            continue
+
+        mode = ProcessMode.CAT_PAGE
         if md_file.name == "index.md":
-            build_page(env, md_file, ProcessMode.CAT_INDEX, dev_mode, build_hash)
-        else:
-            build_page(env, md_file, ProcessMode.CAT_PAGE, dev_mode, build_hash)
+            mode = ProcessMode.CAT_INDEX
+
+        build_page(env, md_file, mode, dev_mode, build_hash)
+
     
 def build_page(env: Environment, md_file_path: Path, process_mode: ProcessMode, dev_mode: bool = False, build_hash: str = ""):
     """Process a single markdown page"""
@@ -217,7 +219,7 @@ def build_page(env: Environment, md_file_path: Path, process_mode: ProcessMode, 
         # Render with template
         template = env.get_template(template_name)
         html_content = template.render(**context, **extras)
-        
+
         # Build path
         md_file_path = md_file_path.with_suffix('.html')
         if str(md_file_path.name) == "index.html":
@@ -242,6 +244,10 @@ def collect_items(content_dir: Path, category_name: str) -> List[dict]:
     
     for md_file in content_dir.glob("*.md"):
         if md_file.name == "index.md":
+            continue
+
+        # Don't collect drafts
+        if md_file.name.startswith(("_", ".")):
             continue
         
         try:
@@ -300,7 +306,8 @@ def parse_md(file_path: Path) -> dict[str, Any]:
         extensions=[
             'fenced_code',
             'codehilite',
-            'tables'
+            'tables',
+            'smarty'
         ], 
         extension_configs={ 
             'codehilite': {
