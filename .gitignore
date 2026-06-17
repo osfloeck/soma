@@ -1,3 +1,9 @@
+# Test site local development output
+/out/
+
+# Odin
+soma
+
 # Python
 __pycache__/
 *.py[cod]

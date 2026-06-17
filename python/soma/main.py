@@ -202,9 +202,12 @@ def build_page(env: Environment, md_file_path: Path, process_mode: ProcessMode, 
         extras: dict[str, Any] = {
             'build_hash': build_hash,
             'dev_mode': dev_mode,
-            'inject_script': INJECT_SCRIPT
             }
         
+        # Inject build hash into each page in dev mode
+        if dev_mode:
+            extras['inject_script'] = INJECT_SCRIPT
+
         # Extract template from file
         template_name = str(context.get('template')) + ".html"
         if template_name is None:

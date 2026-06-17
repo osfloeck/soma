@@ -1,7 +1,7 @@
 # soma
-Static sites without the noise. A minimal static site generator built with Python.
+Static sites without the noise. A minimal static site generator.
 
-This python tool allows users to quickly spin up a static site with minimal fuss and configuration. As this was a learning exercise to understand how static site generators work under the hood, its implementation prioritised simplicity over features.
+This tool allows users to quickly spin up a static site with minimal fuss and configuration. As this was a learning exercise to understand how static site generators work under the hood, its implementation prioritised simplicity over features.
 
 ![Alt text](https://i.imgur.com/8SYyAd3.png)
 
@@ -10,21 +10,19 @@ This python tool allows users to quickly spin up a static site with minimal fuss
 
 ```bash
 # Install from uv (recommended)
-uv tool install git+https://github.com/floeckdev/soma.git
+uv tool install git+https://github.com/osfloeck/soma.git
 
 # Install using pip
-pip install git+https://github.com/floeckdev/soma.git
+pip install git+https://github.com/osfloeck/soma.git
 
 # For local development
-git clone https://github.com/floeckdev/soma.git
+git clone https://github.com/osfloeck/soma.git
 cd soma
 uv tool install -e .
 
 # Verify
 soma --help
 ```
-
-**Requirements:** Python 3.13+, [uv](https://github.com/astral-sh/uv) (or pip)
 
 ## Quickstart
 
@@ -40,7 +38,7 @@ cd new-soma
 # Build the site
 soma build
 
-# Serve. Optionally with `--dev` for live reload
+# Serve. Optionally with `-dev` for live reload
 soma serve
 ```
 
@@ -119,7 +117,5 @@ Below is an example of a customised template to extract frontmatter fields such 
 
 ## Coming soon
 - Search & pagination
-- Tailwind support
-- Better config
 - Commands `new category` & `new item`
 - Support for themes
