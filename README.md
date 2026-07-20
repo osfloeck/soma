@@ -1,28 +1,40 @@
 # soma
 Static sites without the noise. A minimal static site generator.
 
-This tool allows users to quickly spin up a static site with minimal fuss and configuration. As this was a learning exercise to understand how static site generators work under the hood, its implementation prioritised simplicity over features.
+This tool allows users to quickly spin up a static site with minimal fuss and configuration. As this was a learning exercise to understand how static site generators work under the hood, its implementation prioritises simplicity over features.
 
 ![Alt text](https://i.imgur.com/8SYyAd3.png)
 
 
 ## Installation
 
+### macOS / Linux
+
 ```bash
-# Install from uv (recommended)
-uv tool install git+https://github.com/osfloeck/soma.git
+# Build
+odin build . -out:soma
 
-# Install using pip
-pip install git+https://github.com/osfloeck/soma.git
-
-# For local development
-git clone https://github.com/osfloeck/soma.git
-cd soma
-uv tool install -e .
+# Move binary to a directory on your PATH
+sudo mv soma /usr/local/bin/soma
 
 # Verify
 soma --help
 ```
+
+### Windows (untested)
+
+```powershell
+# Build
+odin build . -out:soma.exe
+
+# Move binary to a directory on your PATH (run as Administrator)
+move soma.exe C:\Windows\System32\soma.exe
+
+# Verify
+soma --help
+```
+
+> **Note:** On macOS/Linux you can confirm the binary is found with `which soma`. On Windows use `where soma`.
 
 ## Quickstart
 
@@ -59,8 +71,8 @@ Below is an example of what your layout should look like before building.
 new-soma/
 ├── assets/
 │   ├── css/
-│   │   ├── pygments.css
-│   │   └── style.css
+│   │   ├── site.css
+│   │   └── syntax.css
 │   └── fonts/
 │       ├── cmunbi.otf
 │       ├── cmunbx.otf

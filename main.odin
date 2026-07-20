@@ -11,6 +11,7 @@ import "core:strings"
 import "core:path/filepath"
 import "core:c"
 import "base:runtime"
+import "utils"
 
 // md4c FFI
 foreign import md4c "system:md4c-html"
@@ -149,7 +150,7 @@ init :: proc(name: string) {
 	scaffold_directories(name)
 	create_default_templates(join_path({name, "templates"}))
 	create_default_content(name)
-	create_default_assets(join_path({name, "assets"}))
+	copy_default_assets(join_path({name, "assets", "css"}))
 	copy_default_fonts(join_path({name, "assets", "fonts"}))
 
 	fmt.printfln("soma: new instance `%s` created", name)
@@ -186,34 +187,39 @@ create_default_content :: proc(site_path: string) {
 	}
 }
 
-create_default_assets :: proc(asset_path: string) {
-	// TODO: write the Tailwind input css (with CMU Serif @font-face) and a
-	// minimal app.css placeholder. The real app.css is produced by the
-	// Tailwind CLI, orchestrated from package.json — not by soma.
-	fmt.println("soma: create_default_assets — TODO")
+copy_default_assets :: proc(asset_path: string) {
+	ASSET_FILES := #load_directory("css")
+	for a in ASSET_FILES {
+		err := os.write_entire_file_from_bytes(join_path({asset_path, a.name}), a.data)
+		if (err != nil) {
+			fmt.println("soma (error): Error writing asset!")
+		}
+	}
 }
 
 copy_default_fonts :: proc(font_path: string) {
-	// TODO: embed the CMU Serif suite at compile time and write it out here.
-	// Intended approach once the font files live beside this source:
-	//     FONT_FILES :: #load_directory("fonts")
-	//     for f in FONT_FILES { write_bytes_file(filepath.join({font_path, f.name}), f.data) }
-	fmt.println("soma: copy_default_fonts — TODO")
+	FONT_FILES := #load_directory("fonts")
+	for f in FONT_FILES { 
+		err := os.write_entire_file_from_bytes(join_path({font_path, f.name}), f.data) 
+		if (err != nil) {
+			fmt.println("soma (error): Error writing font file!")
+		}
+	}
 }
 
 join_path :: proc(parts: []string) -> string {
 	path, err := filepath.join(parts)
-		if err != nil {
-			panic("soma: filepath.join allocation failed")
-		}
-		return path
+	if err != nil {
+		panic("soma: filepath.join allocation failed")
+	}
+	return path
 }
 
 write_text_file :: proc(path: string, contents: string) {
 	parent := filepath.dir(path)
 	os.make_directory(parent)
 	err := os.write_entire_file(path, transmute([]u8)contents)
-	if err != nil {
+	if (err != nil) {
 		fmt.printfln("soma (error): could not write file %s", path)
 	}
 }
@@ -266,7 +272,7 @@ collect_items :: proc(content_dir: string, category_name: string) -> []map[strin
 
 parse_md :: proc(file_path: string) -> (page: map[string]Value, ok: bool) {
 	raw, err := os.read_entire_file_from_path(file_path, context.allocator)
-	if err != nil {
+	if (err != nil) {
 		fmt.printfln("soma (error): could not read %s", file_path)
 		return nil, false
 	}
@@ -422,10 +428,9 @@ format_date :: proc(date: Date) -> string {
 // ----------------------------------- Serve -----------------------------------
 
 serve :: proc(port: int, dev: bool) {
-	// TODO: hand-rolled static HTTP server over core:net TCP sockets. In dev,
-	// poll file mtimes on a short interval, debounce, rebuild(dev_mode=true),
-	// and inject the live-reload script.
-	fmt.printfln("soma: serve port=%d dev=%v — TODO", port, dev)
+	// In dev, poll file mtimes on a short interval, debounce, 
+	// rebuild(dev_mode=true), and inject the live-reload script.
+	utils.listen_and_serve(port)
 }
 
 clean :: proc() {
