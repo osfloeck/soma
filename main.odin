@@ -34,6 +34,8 @@ foreign md4c_html {
 // TODO(oskar): check actual md4c.h for more options
 MARKDOWN_PARSER_FLAGS :: c.uint(0x0040 | 0x0004)
 
+RESERVED_FRONTMATTER_KEYS :: []string{"content", "category", "items"}
+
 Page :: struct {
 	file_path: string, 					 // home/user/my-site/index.md		
 	category: string,  					 // projects, ""
@@ -89,6 +91,11 @@ Node :: struct {
 	value: string,		// title
 	pipes: []string,	// {"upper", "truncate"}
 	children: []Node	
+}
+
+Build_Context :: struct {
+	page_html: string,
+	build_path: string
 }
 
 built_ins := map[string]utils.Built_In_Function {
@@ -248,37 +255,25 @@ build :: proc(working_dir: string, dev_mode: bool = false) {
 
 	// Process templates
 	templates := _discover_templates(working_dir)
-	_template_lexer(&templates)
-	parsed_templates := _parse_templates(templates)
-	
-	final_templates := _resolve_templates(parsed_templates)
-
-	for x in final_templates {
-		fmt.println("----- FINAL TEST -----")
-		fmt.printfln("name: %s", x.name)
-		fmt.printfln("nodes %v", x.nodes)
-		fmt.printfln("extends: %s", x.extends)
-	}
-	// ^this step resolves `extends` and `include` blocks
+	_template_lexer(&templates)								// Pure flat lex
+	parsed_templates := _parse_templates(templates) 		// AST
+	final_templates := _resolve_templates(parsed_templates)	// Render context templates
 
 	// Process site content
 	pages := _discover_content(working_dir, build_alloc)
     _discover_items(&pages, build_alloc)
 
-	// for template in templates {
-	// 	fmt.println("----- TEMPLATE DEBUG -----")
-	// 	fmt.printfln("path: %s", template.file_path)
-	// 	fmt.printfln("name: %v", template.name)
-	// 	fmt.printfln("tokens: %v", template.content)
-	// }
+	// Render
+	//_render_site(pages, final_templates)
 
-	// for page in pages {
-	// 	fmt.println("----- PAGE DEBUG -----")
-	// 	fmt.printfln("path: %s", page.file_path)
-	// 	fmt.printfln("fm: %v", page.frontmatter)
-	// 	fmt.printfln("content: %v", page.content)
-	// 	//fmt.printfln("pages: %v", page.items)
-	// }
+	// Build
+
+	for x in final_templates {
+		fmt.printfln("-- TEMPL. DEBUG --")
+		fmt.printfln("name: %v", x.name)
+		fmt.printfln("nodes: %v", x.nodes)
+	}
+
 }
 
 
@@ -378,6 +373,11 @@ _extract_frontmatter :: proc(frontmatter: string, allocator: runtime.Allocator) 
 		key, _, value := strings.partition(line, ":")
 		key = strings.trim_space(key)
 		value = strings.trim_space(value) // e.g. "title", [c, c++], true, 1, Date 2015-09-11
+		
+		if slice.contains(RESERVED_FRONTMATTER_KEYS, key) {
+			fmt.printfln("soma (err): `%s` is a reserved frontmatter name", key)
+			continue
+		}
 		parsed[key] = _parse_value(value, allocator)
 	}
 
@@ -636,6 +636,7 @@ _parse_nodes :: proc(tokens: []Token) -> ([]Node, string, int) {
 
 /*
 	Resolves any possible inheritence requirements of templates.
+	TODO(oskar): cycle detection..
 */
 _resolve_templates :: proc(templates: [dynamic]Parsed_Template) -> [dynamic]Parsed_Template {
 	result := make([dynamic]Parsed_Template, context.allocator)
@@ -648,38 +649,28 @@ _resolve_templates :: proc(templates: [dynamic]Parsed_Template) -> [dynamic]Pars
 
 _resolve_template :: proc(template: Parsed_Template, all: [dynamic]Parsed_Template) -> Parsed_Template {
 	final_nodes := make([dynamic]Node, context.allocator)
-
 	if template.extends == "" {
 		return template
 	}
-	found := -1
-	for candidate, i in all {
-		if template.extends == candidate.name {
-			found = i
-			break
-		}
-	}
-	if found == -1 {
-		fmt.printfln("soma (err): parent template '%s' not found",
-		template.extends)
+
+	// base.html <- default.html <- post.html is not supported by design
+	parent_template, found := _search_templates(template.extends, all)
+	if !found {
+		fmt.printfln("soma (err): parent template '%s' not found", template.extends)
 		return template
 	}
-	parent_template := all[found]
 
 	// Get blocks from child template
 	child_blocks := make(map[string][]Node, context.allocator)
-	for node, i in template.nodes {
+	for node in template.nodes {
 		if node.kind == .Block {
-			block_name := node.value
-			children := node.children
-			map_insert(&child_blocks, block_name, children)
+			map_insert(&child_blocks, node.value, node.children)
 		}
 	}
 
-	// Replace blocks in parent template
-	for node, i in &parent_template.nodes {
-		if node.kind == .Block {
-			// If block exists in child, add
+	// Build final nodes by resolving block overrides and expanding includes
+	for node in parent_template.nodes {
+		if node.kind == .Block {			// -- PROCESS BLOCKS
 			block_name, found := child_blocks[node.value]
 			if found {
 				for child_node in block_name {
@@ -688,19 +679,114 @@ _resolve_template :: proc(template: Parsed_Template, all: [dynamic]Parsed_Templa
 			} else {
 				append(&final_nodes, node)
 			}
-			
-		} else {
-			// Add regular blocks
+		} else if node.kind == .Include {	// -- PROCESS INCLUDES
+			include_template, found := _search_templates(node.value, all)
+			if !found {
+				fmt.printfln("soma (err): include template '%s' not found", node.value)
+				continue
+			}
+			for include_node in include_template.nodes {
+				append(&final_nodes, include_node)
+			}
+		} else {							// -- ADD REGULAR NODE
 			append(&final_nodes, node)
 		}
 	}
-
-	//fmt.printfln("final_nodes: %v", final_nodes)		
 
 	return Parsed_Template {
 		name = template.name,
 		nodes = final_nodes[:],
 		extends = ""
+	}
+}
+
+_search_templates :: proc(key: string, all: [dynamic]Parsed_Template) -> (Parsed_Template, bool) {
+	for template, i in all {
+		if template.name == key {
+			return template, true
+		}
+	}
+	return {}, false
+}
+
+
+/*
+	Render the final build contents from resolved templates and content
+*/
+_render_site :: proc(pages: [dynamic]Page, templates: [dynamic]Parsed_Template) -> [dynamic]Build_Context{
+	render_context := make([dynamic]Build_Context, context.allocator)
+
+	for page in pages {
+		sb := strings.builder_make(context.allocator)
+
+		// Grab template for page
+		page_template, ok := page.frontmatter["template"].(string)
+		if !ok {
+			page_template = "default.html"
+		}
+		template, found := _search_templates(page_template, templates)
+		if !found {
+			fmt.printfln("soma (err): template `%s` not found in `%s`!", 
+			page_template, filepath.base(page.file_path))
+		}
+		
+		// Process each node
+		for node in template.nodes {
+			_render_node(node, page, &sb)
+		}
+	}
+
+	return render_context
+}
+
+_render_node :: proc(node: Node, page: Page, sb: ^strings.Builder) {
+	#partial switch node.kind {
+		case .Text:
+			strings.write_string(sb, node.value)
+		case .Tag:
+			_render_tag(node, page, sb)
+		case .For:
+			fmt.printfln("CASE FOR")
+		case .If:
+			fmt.printfln("CASE IF")
+		case:
+			return
+	}
+}
+
+_render_tag :: proc(node: Node, page: Page, sb: ^strings.Builder) {
+	to_render := "none"
+	to_pipe := len(node.pipes) > 0 ? true : false
+
+	// Special page content
+	if node.value == "content" {
+		to_render = page.content
+	} else if node.value == "category" {
+		to_render = page.category
+	}
+
+	// Regular frontmatter query
+	read, ok := page.frontmatter[node.value].(string)
+	if !ok {
+		base := filepath.base(page.file_path)
+		fmt.printfln("soma (err): `%s` not found in frontmatter of `%s`", node.value, base)
+	} else {
+		to_render = read
+	}
+
+	// Piping
+	if to_pipe {
+		for i in 0..<len(node.pipes){
+			func, ok := built_ins[node.pipes[i]]
+			if ok {
+				to_render = func(to_render)
+			} else {
+				fmt.printfln("soma (err): failed to find function `%v`", node.pipes[i])
+			}
+		}
+		strings.write_string(sb, to_render)
+	} else {
+		strings.write_string(sb, to_render)
 	}
 }
 
