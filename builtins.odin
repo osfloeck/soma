@@ -5,7 +5,7 @@
 
 #+vet explicit-allocators
 
-package utils
+package soma
 
 import "core:fmt"
 import "core:strings"
@@ -17,6 +17,14 @@ Date :: struct {
 	year: u16
 }
 
+Value :: union {
+	string,
+	[]string,
+	int,
+	bool,
+	Date
+}
+
 MONTH_NAMES := [13]string {
 	"", "January", "February", "March", "April", "May", "June",
 	"July", "August", "September", "October", "November", "December",
@@ -26,32 +34,39 @@ WEEKDAY_NAMES := [7]string {
 	"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 }
 
-Built_In_Function :: #type proc(value: string) -> string
+Built_In_Function :: #type proc(value: Value) -> string
 
 
 /*
     Formats date
-    19-01-2026 -> Sunday, 19th January, 2026
+    19-01-2026 -> Sunday, 19th January 2026
 */
-format_date :: proc(value: string) -> string {
-    date, ok := _parse_iso_date(value)
-
-    if !ok {
-        return value
-    }
-
-	weekday := WEEKDAY_NAMES[_weekday_index(date)]
-	month := MONTH_NAMES[date.month]
-	suffix := _ordinal_suffix(date.day)
-	return fmt.tprintf("%s, %d%s %s, %d", weekday, date.day, suffix, month, date.year)
+format_date :: proc(value: Value) -> string {
+	#partial switch variant in value {
+		case Date:
+			weekday := WEEKDAY_NAMES[_weekday_index(variant)]
+			month := MONTH_NAMES[variant.month]
+			suffix := _ordinal_suffix(variant.day)
+			return fmt.tprintf("%s, %d%s %s %d", 
+				weekday, variant.day, suffix, month, variant.year)
+		case:
+			fmt.printfln("soma (err): wrong type passed to format_date()")
+			return ""
+	}
 }
 
 /*
     Uppercases text
     test_case -> TEST_CASE
 */
-uppercase :: proc(value: string) -> string {
-    return strings.to_upper(value, context.allocator)
+uppercase :: proc(value: Value) -> string {
+	#partial switch varient in value {
+		case string:
+			return strings.to_upper(varient, context.allocator)
+		case:
+			fmt.printfln("soma (err): passed non-string to `uppercase` builtin")
+			return ""
+	}
 }
 
 /*
@@ -59,11 +74,17 @@ uppercase :: proc(value: string) -> string {
     100 characters
     TODO(oskar): make word aware
 */
-brief :: proc(value: string) -> string {
-    if len(value) < 100 {
-        return value
-    }
-    return value[:100]
+brief :: proc(value: Value) -> string {
+	#partial switch variant in value {
+		case string:
+		if len(variant) < 100 {
+        	return variant
+    	}
+		return variant[:100]
+		case:
+			fmt.printfln("soma (err): passed non-string to `brief` builtin")
+			return ""
+	}
 }
 
 _parse_iso_date :: proc(text: string) -> (Date, bool) {

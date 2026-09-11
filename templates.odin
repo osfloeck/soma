@@ -3,7 +3,7 @@
     Default content for new sites.
 */
 
-package utils
+package soma
 
 BASE_TEMPLATE :: `<!DOCTYPE html>
 <html lang="en">

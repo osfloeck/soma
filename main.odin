@@ -14,7 +14,6 @@ import "core:strings"
 import "core:path/filepath"
 import "core:c"
 import "base:runtime"
-import "utils"
 import "core:strconv"
 import "core:slice"
 
@@ -37,12 +36,12 @@ MARKDOWN_PARSER_FLAGS :: c.uint(0x0040 | 0x0004)
 RESERVED_FRONTMATTER_KEYS :: []string{"content", "category", "items"}
 
 Page :: struct {
-	file_path: string, 					 // home/user/my-site/index.md		
-	category: string,  					 // projects, ""
-	is_index: bool,	   					 // true, false
-	frontmatter: map[string]Frontmatter, // title: "test", rank: 1, tags: [code, stuff]
-	content: string,					 // HTML parsed of raw content
-	items: []Page						 // category & index pages only
+	file_path: string, 				// home/user/my-site/index.md		
+	category: string,  				// projects, ""
+	is_index: bool,	   				// true, false
+	frontmatter: map[string]Value,	// title: "test", rank: 1, tags: [code, stuff]
+	content: string,				// HTML parsed of raw content
+	items: []Page					// category & index pages only
 }
 
 Template :: struct {
@@ -58,13 +57,7 @@ Parsed_Template :: struct {
 	nodes: []Node,		// parsed AST of template
 }
 
-Frontmatter :: union {
-	string,				// supported frontmatter types
-	[]string,
-	int,
-	bool,
-	utils.Date
-}
+
 
 Token_Kind :: enum {
 	Text,		// raw literal " <main>\n "
@@ -98,10 +91,10 @@ Build_Context :: struct {
 	build_path: string
 }
 
-built_ins := map[string]utils.Built_In_Function {
-	"format_date" = utils.format_date,
-	"uppercase" = utils.uppercase,
-	"brief" = utils.brief
+built_ins := map[string]Built_In_Function {
+	"format_date" = format_date,
+	"uppercase" = uppercase,
+	"brief" = brief
 }
 
 PRINT_USAGE :: "soma — a static site generator without the noise\n" +
@@ -192,7 +185,7 @@ init :: proc(name: string) {
 	}
 
 	// Create default templates
-	templates := utils.default_templates()
+	templates := default_templates()
 	templates_dir, _ := filepath.join({name, "templates"}, init_alloc)
 	for file_name, contents in templates {
 		path, _ := filepath.join({templates_dir, file_name}, init_alloc)
@@ -200,7 +193,7 @@ init :: proc(name: string) {
 	}
 
 	// Create default content
-	content := utils.default_content()
+	content := default_content()
 	for relative_path, contents in content {
 		path, _ := filepath.join({name, relative_path}, init_alloc)
 		_write_text_file(path, contents)
@@ -264,15 +257,14 @@ build :: proc(working_dir: string, dev_mode: bool = false) {
     _discover_items(&pages, build_alloc)
 
 	// Render
-	//_render_site(pages, final_templates)
-
+	test := _render_site(pages, final_templates)
 	// Build
 
-	for x in final_templates {
-		fmt.printfln("-- TEMPL. DEBUG --")
-		fmt.printfln("name: %v", x.name)
-		fmt.printfln("nodes: %v", x.nodes)
-	}
+	// for x in final_templates {
+	// 	fmt.printfln("-- TEMPL. DEBUG --")
+	// 	fmt.printfln("name: %v", x.name)
+	// 	fmt.printfln("nodes: %v", x.nodes)
+	// }
 
 }
 
@@ -357,8 +349,8 @@ _discover_items :: proc(pages: ^[dynamic]Page, allocator: runtime.Allocator) {
 	}
 }
 
-_extract_frontmatter :: proc(frontmatter: string, allocator: runtime.Allocator) -> map[string]Frontmatter {
-	parsed := make(map[string]Frontmatter, allocator)
+_extract_frontmatter :: proc(frontmatter: string, allocator: runtime.Allocator) -> map[string]Value {
+	parsed := make(map[string]Value, allocator)
 
 	// title: "Home"\n 
 	// template: "default"\n
@@ -390,7 +382,7 @@ _extract_frontmatter :: proc(frontmatter: string, allocator: runtime.Allocator) 
 	i.e. any of "My Post", [c, c++], true, 1, 2015-09-11
 	See `Frontmatter` for supported types
 */
-_parse_value :: proc(value: string, allocator: runtime.Allocator) -> Frontmatter {
+_parse_value :: proc(value: string, allocator: runtime.Allocator) -> Value {
     if strings.has_prefix(value, "[") {
         inner := value[1:len(value)-1]
         parts := strings.split(inner, ",", allocator)
@@ -413,7 +405,7 @@ _parse_value :: proc(value: string, allocator: runtime.Allocator) -> Frontmatter
 	}
 
     if strings.contains(value, "-") {
-        date, ok := utils._parse_iso_date(value)
+        date, ok := _parse_iso_date(value)
         if ok { 
 			return date 
 		}
@@ -716,7 +708,7 @@ _search_templates :: proc(key: string, all: [dynamic]Parsed_Template) -> (Parsed
 _render_site :: proc(pages: [dynamic]Page, templates: [dynamic]Parsed_Template) -> [dynamic]Build_Context{
 	render_context := make([dynamic]Build_Context, context.allocator)
 
-	for page in pages {
+	for page in pages[:1] {
 		sb := strings.builder_make(context.allocator)
 
 		// Grab template for page
@@ -734,6 +726,9 @@ _render_site :: proc(pages: [dynamic]Page, templates: [dynamic]Parsed_Template) 
 		for node in template.nodes {
 			_render_node(node, page, &sb)
 		}
+
+		build_html := strings.to_string(sb)
+		fmt.printfln("HTML FOR `%v`:\n %v", page.file_path, build_html)
 	}
 
 	return render_context
@@ -746,9 +741,9 @@ _render_node :: proc(node: Node, page: Page, sb: ^strings.Builder) {
 		case .Tag:
 			_render_tag(node, page, sb)
 		case .For:
-			fmt.printfln("CASE FOR")
+			
 		case .If:
-			fmt.printfln("CASE IF")
+			
 		case:
 			return
 	}
@@ -756,38 +751,53 @@ _render_node :: proc(node: Node, page: Page, sb: ^strings.Builder) {
 
 _render_tag :: proc(node: Node, page: Page, sb: ^strings.Builder) {
 	to_render := "none"
-	to_pipe := len(node.pipes) > 0 ? true : false
 
 	// Special page content
 	if node.value == "content" {
 		to_render = page.content
 	} else if node.value == "category" {
 		to_render = page.category
-	}
-
-	// Regular frontmatter query
-	read, ok := page.frontmatter[node.value].(string)
-	if !ok {
-		base := filepath.base(page.file_path)
-		fmt.printfln("soma (err): `%s` not found in frontmatter of `%s`", node.value, base)
 	} else {
-		to_render = read
+		// Regular frontmatter query
+		read, ok := page.frontmatter[node.value]
+		if !ok {
+			base := filepath.base(page.file_path)
+			fmt.printfln("soma (err): `%s` not found in frontmatter of `%s`", node.value, base)
+			return
+		}
+		switch varient in read {
+			case string:
+				to_render = varient
+			case []string:
+				tmp := make([dynamic]string, context.allocator)
+				for str in varient {
+					append(&tmp, str)
+					append(&tmp, ", ")
+				}
+				len := len(tmp)
+				final := strings.concatenate(tmp[:len-1], context.allocator)
+				to_render = final
+			case int:
+				buf: []byte
+				to_render = strconv.write_int(buf, cast(i64)varient, 10)
+			case bool:
+				to_render = varient ? "true" : "false"
+			case Date:
+				to_render = format_date(varient)
+		}
 	}
 
 	// Piping
-	if to_pipe {
-		for i in 0..<len(node.pipes){
-			func, ok := built_ins[node.pipes[i]]
-			if ok {
-				to_render = func(to_render)
-			} else {
-				fmt.printfln("soma (err): failed to find function `%v`", node.pipes[i])
-			}
+	for pipe in node.pipes {
+		built_in_func, ok := built_ins[pipe]
+		if ok {
+			to_render = built_in_func(to_render)
+		} else {
+			fmt.printfln("soma (err): failed to find function `%v`", pipe)
 		}
-		strings.write_string(sb, to_render)
-	} else {
-		strings.write_string(sb, to_render)
 	}
+
+	strings.write_string(sb, to_render)
 }
 
 _markdown_to_html :: proc(markdown_source: string, allocator: runtime.Allocator) -> string {
@@ -823,7 +833,7 @@ _md4c_callback :: proc "c" (output: cstring, size: c.uint, userdata: rawptr) {
 	which supports live reload
 */
 serve :: proc(port: int, dev: bool) {
-	utils.listen_and_serve(port)
+	listen_and_serve(port)
 }
 
 

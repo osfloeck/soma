@@ -4,14 +4,14 @@
     Implementation likely unsuitable for anything serious.
 */
 
-package utils
+package soma
 
 import "core:fmt"
 import "core:strings"
 import "core:net"
 import "core:os"
 
-main :: proc() {
+http_test :: proc() {
     port := 3000
     listen_and_serve(port)
 }
