@@ -57,8 +57,6 @@ Parsed_Template :: struct {
 	nodes: []Node,		// parsed AST of template
 }
 
-
-
 Token_Kind :: enum {
 	Text,		// raw literal " <main>\n "
 	Tag,		// {{ title }}
@@ -260,6 +258,7 @@ build :: proc(working_dir: string, dev_mode: bool = false) {
 	test := _render_site(pages, final_templates)
 	// Build
 
+	//fmt.printfln("registry: %#v", registry)
 	// for x in final_templates {
 	// 	fmt.printfln("-- TEMPL. DEBUG --")
 	// 	fmt.printfln("name: %v", x.name)
@@ -314,12 +313,16 @@ _discover_content :: proc(working_dir: string, allocator: runtime.Allocator) -> 
 			continue
 		}
 
+		// Clean frontmatter and content
+		final_frontmatter := strings.trim_space(split_content[1])
+		final_content := strings.trim_space(split_content[2])
+
 		append(&discovered, Page {
 			file_path = strings.clone(file.fullpath, allocator),
 			category = strings.clone(category, allocator),
 			is_index = strings.clone(file.name, allocator) == "index.md",
-			frontmatter = _extract_frontmatter(split_content[1], allocator),
-			content = _markdown_to_html(split_content[2], allocator)
+			frontmatter = _extract_frontmatter(final_frontmatter, allocator),
+			content = _markdown_to_html(final_content, allocator)
 		})
 	}
 
@@ -346,6 +349,35 @@ _discover_items :: proc(pages: ^[dynamic]Page, allocator: runtime.Allocator) {
 			}
 		}
 		page.items = found[:]
+
+		// Register page itself
+		registry.items[{page.file_path, ""}] = 
+		Item {
+			file_path = page.file_path,
+			page = page,
+			type = .Page
+		}
+		
+		// Register items array
+		registry.items[{page.file_path, "items"}] = 
+		Item {
+			file_path = page.file_path,
+			name = "items",
+			page = page,
+			items = page.items,
+			type = .Array
+		}
+
+		// Register frontmatter
+		for name, val in page.frontmatter {
+			registry.items[{page.file_path, name}] =
+			Item {
+				file_path = page.file_path,
+				name = name,
+				value = val,
+				type = .Value
+			}
+		}
 	}
 }
 
@@ -705,10 +737,11 @@ _search_templates :: proc(key: string, all: [dynamic]Parsed_Template) -> (Parsed
 /*
 	Render the final build contents from resolved templates and content
 */
+
 _render_site :: proc(pages: [dynamic]Page, templates: [dynamic]Parsed_Template) -> [dynamic]Build_Context{
 	render_context := make([dynamic]Build_Context, context.allocator)
 
-	for page in pages[:1] {
+	for page in pages {
 		sb := strings.builder_make(context.allocator)
 
 		// Grab template for page
@@ -721,35 +754,49 @@ _render_site :: proc(pages: [dynamic]Page, templates: [dynamic]Parsed_Template) 
 			fmt.printfln("soma (err): template `%s` not found in `%s`!", 
 			page_template, filepath.base(page.file_path))
 		}
-		
+
+		// Set scope & variables for this page
+		scope: Variable_Scope
+		scope.variables["items"] = &registry.items[{page.file_path, "items"}]
+		for name, value in page.frontmatter {
+			scope.variables[name] = &registry.items[{page.file_path, name}]
+		}
+		//scope.variables["content"] = &registry.items[{page.file_path, "content"}]
+		//scope.variables["category"] = &registry.items[{page.file_path, "category"}]
+
+
 		// Process each node
 		for node in template.nodes {
-			_render_node(node, page, &sb)
+			_render_node(node, page, &sb, &scope)
 		}
 
 		build_html := strings.to_string(sb)
-		fmt.printfln("HTML FOR `%v`:\n %v", page.file_path, build_html)
+		test := strings.trim_right_space(build_html)
+		
+		//fmt.printfln("CONTENT RAW HTML: %v", page.content)
+		//fmt.printfln("FINAL AST: %v", template.nodes)
+		fmt.printfln("HTML FOR `%v`:\n %v", page.file_path, test)
 	}
 
 	return render_context
 }
 
-_render_node :: proc(node: Node, page: Page, sb: ^strings.Builder) {
+_render_node :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variable_Scope) {
 	#partial switch node.kind {
 		case .Text:
 			strings.write_string(sb, node.value)
 		case .Tag:
-			_render_tag(node, page, sb)
+			_render_tag(node, page, sb, scope)
 		case .For:
-			
+			_render_for(node, page, sb, scope)
 		case .If:
-			
+			//_render_if(node, page, sb, scope)
 		case:
 			return
 	}
 }
 
-_render_tag :: proc(node: Node, page: Page, sb: ^strings.Builder) {
+_render_tag :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variable_Scope) {
 	to_render := "none"
 
 	// Special page content
@@ -758,11 +805,34 @@ _render_tag :: proc(node: Node, page: Page, sb: ^strings.Builder) {
 	} else if node.value == "category" {
 		to_render = page.category
 	} else {
-		// Regular frontmatter query
-		read, ok := page.frontmatter[node.value]
-		if !ok {
+		obj, sep, accessor := strings.partition(node.value, ".")
+		page := page
+		lookup := node.value
+
+		read: Value
+		read_ok: bool
+
+		item, ok := _var_scope_lookup(scope, obj)
+		switch item.type {
+		case .Undefined:
 			base := filepath.base(page.file_path)
-			fmt.printfln("soma (err): `%s` not found in frontmatter of `%s`", node.value, base)
+			fmt.printfln("soma (err): `%s` not found in frontmatter of `%s`", obj, base)
+		case .Page:
+			if sep == "." {
+				page = item.page
+				lookup = accessor
+				read, read_ok = page.frontmatter[lookup]
+			} else {
+				fmt.printfln("soma (err): variable `%s` is a page without a field access", obj)
+			}
+		case .Array:
+			fmt.printfln("soma (err): variable `%s` is an array of pages and is not allowed here",)
+		case .Value:
+			read = item.value
+			read_ok = true
+		}
+
+		if !read_ok {
 			return
 		}
 		switch varient in read {
@@ -779,7 +849,7 @@ _render_tag :: proc(node: Node, page: Page, sb: ^strings.Builder) {
 				to_render = final
 			case int:
 				buf: []byte
-				to_render = strconv.write_int(buf, cast(i64)varient, 10)
+				to_render = fmt.aprint(varient, allocator = context.temp_allocator)
 			case bool:
 				to_render = varient ? "true" : "false"
 			case Date:
@@ -798,6 +868,67 @@ _render_tag :: proc(node: Node, page: Page, sb: ^strings.Builder) {
 	}
 
 	strings.write_string(sb, to_render)
+}
+
+_render_for :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variable_Scope) {
+
+	// for item in items
+	// -> sub (item), obj (items)
+
+	sub, _, obj := strings.partition(node.value, "in")
+	sub = strings.trim_space(sub)
+	obj = strings.trim_space(obj)
+
+	for_scope: Variable_Scope
+	for_scope.prev = scope
+
+	item, ok := _var_scope_lookup(scope, obj)
+
+	switch item.type {
+		case .Undefined:
+			fmt.printfln("soma (err): fugged up items (%v)", obj)
+		case .Value:
+			switch value in item.value {
+				case string:
+				case int:
+					for v in 0..<value {
+						fmt.println("HELLO", v)
+						item: Item
+						item.value = v
+						item.type = .Value
+						for_scope.variables[sub] = &item
+						for n in node.children {
+							_render_node(n, page, sb, &for_scope)
+						}
+					}
+				case bool:
+				case Date:
+
+				case []string:
+					for v in value {
+						item := new(Item, context.allocator)
+						item.value = v
+						item.type = .Value
+						for_scope.variables[sub] = item
+						for n in node.children {
+							_render_node(n, page, sb, &for_scope)
+						}
+					}
+			}
+		case .Page:
+		case .Array:
+			for &item in item.items {
+				for_scope.variables[sub] = &registry.items[{
+					item.file_path, "",
+				}]
+				for n in node.children {
+					_render_node(n, page, sb, &for_scope)
+				}
+			}
+	}
+	
+
+
 }
 
 _markdown_to_html :: proc(markdown_source: string, allocator: runtime.Allocator) -> string {
