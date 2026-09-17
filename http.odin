@@ -1,5 +1,5 @@
 /*    
-    File: utils/http.odin
+    http.odin
     An attempt to write my own http server.
     Implementation likely unsuitable for anything serious.
 */

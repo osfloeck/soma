@@ -1,6 +1,6 @@
 /*
-    File: utils/templates.odin
-    Default content for new sites.
+    seed.odin
+    Default content for new sites
 */
 
 package soma
