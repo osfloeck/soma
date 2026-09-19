@@ -86,8 +86,9 @@ Node :: struct {
 }
 
 Build_Context :: struct {
+	build_path: string,
 	page_html: string,
-	build_path: string
+	is_index: bool
 }
 
 built_ins := map[string]Built_In_Function {
@@ -254,16 +255,8 @@ build :: proc(working_dir: string, dev_mode: bool = false) {
     _discover_items(&pages, build_alloc)
 
 	// Render
-	_ = _render_site(pages, final_templates)
-	// Build
-
-	//fmt.printfln("registry: %#v", registry)
-	// for x in final_templates {
-	// 	fmt.printfln("-- TEMPL. DEBUG --")
-	// 	fmt.printfln("name: %v", x.name)
-	// 	fmt.printfln("nodes: %v", x.nodes)
-	// }
-
+	final_pages := _render_site(pages, final_templates)
+	_build_site(final_pages)
 }
 
 /*
@@ -746,11 +739,12 @@ _search_templates :: proc(key: string, all: [dynamic]Parsed_Template) -> (Parsed
 /*
 	Render the final build contents from resolved templates and content
 */
-_render_site :: proc(pages: [dynamic]Page, templates: [dynamic]Parsed_Template) -> [dynamic]Build_Context{
-	render_context := make([dynamic]Build_Context, context.allocator)
+_render_site :: proc(pages: [dynamic]Page, templates: [dynamic]Parsed_Template) -> [dynamic]Build_Context {
+	final_pages := make([dynamic]Build_Context, context.allocator)
 
 	for page in pages {
 		sb := strings.builder_make(context.allocator)
+		page_path := page.file_path
 		scope: Variable_Scope
 
 		// Grab template
@@ -761,16 +755,16 @@ _render_site :: proc(pages: [dynamic]Page, templates: [dynamic]Parsed_Template) 
 		template, found := _search_templates(page_template, templates)
 		if !found {
 			fmt.printfln("soma (err): template `%s` not found in `%s`!", 
-			page_template, filepath.base(page.file_path))
+			page_template, filepath.base(page_path))
 		}
 
 		// Set scope
 		for name, _ in page.frontmatter {
-			scope.variables[name] = &registry.items[{page.file_path, name}]
+			scope.variables[name] = &registry.items[{page_path, name}]
 		}
-		scope.variables["category"] = &registry.items[{page.file_path, "category"}]
-		scope.variables["content"] = &registry.items[{page.file_path, "content"}]
-		scope.variables["items"] = &registry.items[{page.file_path, "items"}]
+		scope.variables["category"] = &registry.items[{page_path, "category"}]
+		scope.variables["content"] = &registry.items[{page_path, "content"}]
+		scope.variables["items"] = &registry.items[{page_path, "items"}]
 
 		// Process template AST
 		for node in template.nodes {
@@ -781,10 +775,14 @@ _render_site :: proc(pages: [dynamic]Page, templates: [dynamic]Parsed_Template) 
 		
 		//fmt.printfln("CONTENT RAW HTML: %v", page.content)
 		//fmt.printfln("FINAL AST: %v", template.nodes)
-		fmt.printfln("HTML FOR `%v`:\n %v", page.file_path, build_html)
+		//fmt.printfln("HTML FOR `%v`:\n %v", page_path, build_html)
+		append(&final_pages, Build_Context {
+			build_path = page_path,
+			page_html = build_html
+		})
 	}
 
-	return render_context
+	return final_pages
 }
 
 _render_node :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variable_Scope) {
@@ -812,7 +810,7 @@ _render_tag :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variab
 	read: Value
 	read_ok: bool
 
-	item, _ := _var_scope_lookup(scope, obj)
+	item := _var_scope_lookup(scope, obj)
 
 	switch item.type {
 		case .Undefined:
@@ -872,20 +870,22 @@ _render_tag :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variab
 	strings.write_string(sb, to_render)
 }
 
+/*
+	Handles rendering `for` nodes in AST.
+		for item in items
+		loop_var (item), collection (items)
+*/
 _render_for :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variable_Scope) {
-
-	// for item in items
-	// -> sub (item), obj (items)
-
 	loop_var, _, collection := strings.partition(node.value, "in")
 	loop_var = strings.trim_space(loop_var)
 	collection = strings.trim_space(collection)
 
 	for_scope: Variable_Scope
 	for_scope.prev = scope
+	item := _var_scope_lookup(scope, collection)
 
-	item, _ := _var_scope_lookup(scope, collection)
-
+	// TODO(oskar): Assess whether or not we want to be able to
+	// handle other values like we do with int. Just []string & []Page?
 	switch item.type {
 		case .Undefined:
 			fmt.printfln("soma (err): collection `%s` undefined in `%s/%s`",
@@ -905,7 +905,6 @@ _render_for :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variab
 					}
 				case bool:
 				case Date:
-
 				case []string:
 					for v in value {
 						item := new(Item, context.allocator)
@@ -931,7 +930,7 @@ _render_for :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variab
 }
 
 _render_if :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variable_Scope) {
-	item, _ := _var_scope_lookup(scope, node.value)
+	item := _var_scope_lookup(scope, node.value)
 
 	if item.type == .Undefined {
 		fmt.printfln("soma (err): frontmatter `%s` not found in `%s/%s`",
@@ -950,7 +949,19 @@ _render_if :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variabl
 			_render_node(child, page, sb, scope)
 		}
 	}
-		
+}
+
+/*
+	Writes our final pages to the build directory,
+	with final path following simple rules
+		index.md 	   -> index.html			.md -> .html
+		blog/index.md  -> /blog/index.html		.md -> .html
+		blog/post.md   -> /blog/post/index.html	.md -> /index.html
+*/
+_build_site :: proc(pages: [dynamic]Build_Context) {
+	
+
+
 }
 
 _markdown_to_html :: proc(markdown_source: string, allocator: runtime.Allocator) -> string {

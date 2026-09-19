@@ -43,11 +43,11 @@ Item_Type :: enum {
 /*
     Registers a new Item into the global registry
 */
-_register_item :: proc(page: Page, path: string, name: string, type: Item_Type) {
+_register_item :: proc(page: Page, name: string, type: Item_Type) {
     item := Item { name = name }
     switch type {
         case .Undefined:
-            fmt.printfln("soma (err): Cannot register {%s, %s} (undefined)", path, name)
+            fmt.printfln("soma (err): Cannot register {%s, %s} (undefined)", page.file_path, name)
         case .Page:
             item.page = page
         case .Value:
@@ -56,21 +56,17 @@ _register_item :: proc(page: Page, path: string, name: string, type: Item_Type) 
     registry.items[{page.file_path, name}] = item
 }
 
-_ephemeral_scope :: proc(scope: ^Variable_Scope, name: string, item: ^Item) {
-    scope.variables[name] = item
-}
-
 /*
     Walks the scope chain looking for name, returning item_dummy
     (.Undefined) if not found in any scope
 */
-_var_scope_lookup :: proc(scope: ^Variable_Scope, name: string) -> (^Item, bool) {
+_var_scope_lookup :: proc(scope: ^Variable_Scope, name: string) -> ^Item {
     if scope == nil {
-        return &item_dummy, false
+        return &item_dummy
     }
-    item, ok := scope.variables[name]
-    if !ok {
-        item, ok = _var_scope_lookup(scope.prev, name)
+    item, found := scope.variables[name]
+    if !found {
+        item = _var_scope_lookup(scope.prev, name)
     }
-    return item, ok
+    return item
 }
