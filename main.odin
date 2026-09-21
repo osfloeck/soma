@@ -34,7 +34,7 @@ foreign md4c_html {
 // TODO(oskar): check actual md4c.h for more options
 MARKDOWN_PARSER_FLAGS :: c.uint(0x0040 | 0x0004)
 
-RESERVED_FRONTMATTER_KEYS :: []string{"content", "category", "items"}
+RESERVED_FRONTMATTER_KEYS :: []string{"content", "category", "items", "page_ref"}
 
 Page :: struct {
 	file_path: string, 				// home/user/my-site/index.md		
@@ -85,12 +85,6 @@ Node :: struct {
 	children: []Node	
 }
 
-Build_Context :: struct {
-	build_path: string,
-	page_html: string,
-	is_index: bool
-}
-
 built_ins := map[string]Built_In_Function {
 	"format_date" = format_date,
 	"uppercase" = uppercase,
@@ -105,7 +99,7 @@ PRINT_USAGE :: "soma — a static site generator without the noise\n" +
 			   "  soma clean           clears build directory\n"
 
 /*
-	Program entrypoint. Handles the CLI interface.
+	Program entrypoint. Handles the CLI interface
 */
 main :: proc() {
 	arguments := os.args
@@ -118,6 +112,7 @@ main :: proc() {
 
 	defer free_all(context.allocator)
 	working_dir, _ := os.getwd(context.allocator)
+	if command != "init" { _valid_dir(command) }
 
 	switch command {
 	case "init":
@@ -158,7 +153,7 @@ main :: proc() {
 
 /* 
 	Initialise site with default content. Creates default directories,
-	then populates with some categories and default styling.
+	then populates with some categories and default styling
 */
 init :: proc(name: string) {
 	if os.exists(name) {
@@ -220,6 +215,10 @@ init :: proc(name: string) {
 		}
 	}
 
+	// Default soma.toml
+	soma_toml, _ := filepath.join({name, "soma.toml"}, context.allocator)
+	_write_text_file(soma_toml, "build_dir = \"build\"")
+
 	fmt.printfln("soma: new instance `%s` created", name)
 	fmt.println("soma: run `soma build` then `soma serve` to get started")
 }
@@ -254,9 +253,9 @@ build :: proc(working_dir: string, dev_mode: bool = false) {
 	pages := _discover_content(working_dir, build_alloc)
     _discover_items(&pages, build_alloc)
 
-	// Render
+	// Render html and write to build
 	final_pages := _render_site(pages, final_templates)
-	_build_site(final_pages)
+	_build_site(final_pages, build_dir, working_dir)
 }
 
 /*
@@ -339,6 +338,14 @@ _discover_content :: proc(working_dir: string, allocator: runtime.Allocator) -> 
 			type = .Value
 		}
 
+		// Register Page `page_ref`
+		registry.items[{page.file_path, "page_ref"}] =
+		Item {
+			name = "page_ref",
+			value = _page_url(page),
+			type = .Value
+		}
+
 		// Register Page `frontmatter`
 		for name, val in page.frontmatter {
 			registry.items[{page.file_path, name}] =
@@ -400,11 +407,10 @@ _extract_frontmatter :: proc(frontmatter: string, allocator: runtime.Allocator) 
 			continue
 		}
 
+		// (key) tags (value) [c, c++]
 		key, _, value := strings.partition(line, ":")
 		key = strings.trim_space(key)
-		// title, teplate, tags
 		value = strings.trim_space(value) 
-		// "text", [c, c++], true, 1, Date 2015-09-11
 
 		if slice.contains(RESERVED_FRONTMATTER_KEYS, key) {
 			fmt.printfln("soma (err): `%s` is a reserved frontmatter key!", key)
@@ -459,7 +465,7 @@ _parse_value :: proc(value: string, allocator: runtime.Allocator) -> Value {
 }
 
 /*
-	Discover site templates and tokenize.
+	Discover site templates and tokenize
 */
 _discover_templates :: proc(working_dir: string) -> [dynamic]Template {
 	template_dir, _ := filepath.join({working_dir, "templates"}, context.allocator)
@@ -557,7 +563,7 @@ _template_lexer :: proc(templates: ^[dynamic]Template) {
 }
 
 /*
-	Parses templates lexed content into an AST.
+	Parses templates lexed content into an AST
 */
 _parse_templates :: proc(templates: [dynamic]Template) -> [dynamic]Parsed_Template {
 	parsed := make([dynamic]Parsed_Template, context.allocator)
@@ -577,7 +583,7 @@ _parse_templates :: proc(templates: [dynamic]Template) -> [dynamic]Parsed_Templa
 }
 
 /*
-	Performs actual conversion of lex'ed tokens to AST.
+	Performs actual conversion of lex'ed tokens to AST
 */
 _parse_nodes :: proc(tokens: []Token) -> ([]Node, string, int) {
 	nodes := make([dynamic]Node, context.allocator)
@@ -662,8 +668,8 @@ _parse_nodes :: proc(tokens: []Token) -> ([]Node, string, int) {
 }
 
 /*
-	Resolves any possible inheritence requirements of templates.
-	TODO(oskar): cycle detection..
+	Resolves any possible inheritence requirements of templates
+	TODO(oskar): cycle detection
 */
 _resolve_templates :: proc(templates: [dynamic]Parsed_Template) -> [dynamic]Parsed_Template {
 	result := make([dynamic]Parsed_Template, context.allocator)
@@ -739,8 +745,8 @@ _search_templates :: proc(key: string, all: [dynamic]Parsed_Template) -> (Parsed
 /*
 	Render the final build contents from resolved templates and content
 */
-_render_site :: proc(pages: [dynamic]Page, templates: [dynamic]Parsed_Template) -> [dynamic]Build_Context {
-	final_pages := make([dynamic]Build_Context, context.allocator)
+_render_site :: proc(pages: [dynamic]Page, templates: [dynamic]Parsed_Template) -> [dynamic]Page {
+	final_pages := make([dynamic]Page, context.allocator)
 
 	for page in pages {
 		sb := strings.builder_make(context.allocator)
@@ -763,8 +769,9 @@ _render_site :: proc(pages: [dynamic]Page, templates: [dynamic]Parsed_Template) 
 			scope.variables[name] = &registry.items[{page_path, name}]
 		}
 		scope.variables["category"] = &registry.items[{page_path, "category"}]
-		scope.variables["content"] = &registry.items[{page_path, "content"}]
-		scope.variables["items"] = &registry.items[{page_path, "items"}]
+		scope.variables["content"] 	= &registry.items[{page_path, "content"}]
+		scope.variables["page_ref"] = &registry.items[{page_path, "page_ref"}]
+		scope.variables["items"] 	= &registry.items[{page_path, "items"}]
 
 		// Process template AST
 		for node in template.nodes {
@@ -776,9 +783,11 @@ _render_site :: proc(pages: [dynamic]Page, templates: [dynamic]Parsed_Template) 
 		//fmt.printfln("CONTENT RAW HTML: %v", page.content)
 		//fmt.printfln("FINAL AST: %v", template.nodes)
 		//fmt.printfln("HTML FOR `%v`:\n %v", page_path, build_html)
-		append(&final_pages, Build_Context {
-			build_path = page_path,
-			page_html = build_html
+		append(&final_pages, Page {
+			file_path = page_path,
+			content = build_html,
+			is_index = page.is_index,
+			category = page.category
 		})
 	}
 
@@ -803,29 +812,30 @@ _render_node :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Varia
 _render_tag :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variable_Scope) {
 	to_render := "none"
 
-	obj, sep, accessor := strings.partition(node.value, ".")
+	tag, sep, accessor := strings.partition(node.value, ".")
 	page := page
-	lookup := node.value
 
 	read: Value
 	read_ok: bool
 
-	item := _var_scope_lookup(scope, obj)
+	item := _var_scope_lookup(scope, tag)
 
 	switch item.type {
 		case .Undefined:
 			base := filepath.base(page.file_path)
-			fmt.printfln("soma (err): `%s` not found in frontmatter of `%s`", obj, base)
+			fmt.printfln("soma (err): `%s` not found in frontmatter of `%s`", tag, base)
 		case .Page:
 			if sep == "." {
+				reg_lookup: Item
 				page = item.page
-				lookup = accessor
-				read, read_ok = page.frontmatter[lookup]
+				reg_lookup, read_ok = registry.items[{page.file_path, accessor}]
+				if read_ok { read = reg_lookup.value }
+				//read, read_ok = page.frontmatter[lookup]
 			} else {
-				fmt.printfln("soma (err): variable `%s` is a page without a field access", obj)
+				fmt.printfln("soma (err): variable `%s` is a page without a field access", tag)
 			}
 		case .Array:
-			fmt.printfln("soma (err): variable `%s` is an array of pages and is not allowed here",)
+			fmt.printfln("soma (err): variable is an array of pages and is not allowed here")
 		case .Value:
 			read = item.value
 			read_ok = true
@@ -955,13 +965,42 @@ _render_if :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variabl
 	Writes our final pages to the build directory,
 	with final path following simple rules
 		index.md 	   -> index.html			.md -> .html
-		blog/index.md  -> /blog/index.html		.md -> .html
-		blog/post.md   -> /blog/post/index.html	.md -> /index.html
+		blog/index.md  -> blog/index.html		.md -> .html
+		blog/post.md   -> blog/post/index.html	.md -> /index.html
 */
-_build_site :: proc(pages: [dynamic]Build_Context) {
+_build_site :: proc(build_pages: [dynamic]Page, build_dir: string, working_dir: string) {
+	asset_in ,_ := filepath.join({working_dir, "/assets"}, context.allocator)
+	asset_out,_ := filepath.join({build_dir, "/assets"}, context.allocator)
+	os.copy_directory_all(asset_out, asset_in)
+
+	for page in build_pages[:5] {
+		build_path, _ := filepath.join({build_dir, _page_rel_output_path(page)}, context.allocator)
+		_write_text_file(build_path, page.content)
+
+		fmt.printfln("page.build_path: %v", page.file_path)
+		fmt.printfln("final_build_path: %v\n", build_path)
+	}
+}
+
+_page_rel_output_path :: proc(page: Page) -> (string) {
+	file_stem := filepath.short_stem(filepath.base(page.file_path))
+
+	if page.category != "" {
+		file_stem = strings.concatenate({page.category, "/", file_stem}, context.allocator)
+	}
 	
+	extension := ".html"
+	if !page.is_index {
+		extension = "/index.html"
+	}
+	
+	page_rel, _ := strings.concatenate({file_stem, extension}, context.allocator)
+	return page_rel
+}
 
-
+_page_url :: proc(page: Page) -> string {
+	page := strings.trim_suffix(_page_rel_output_path(page), "index.html")
+	return strings.concatenate({"/", page}, context.allocator) or_else ""
 }
 
 _markdown_to_html :: proc(markdown_source: string, allocator: runtime.Allocator) -> string {
@@ -987,6 +1026,15 @@ _md4c_callback :: proc "c" (output: cstring, size: c.uint, userdata: rawptr) {
 	builder := cast(^strings.Builder)userdata
 	chunk := string(output)
 	strings.write_string(builder, chunk[:size])
+}
+
+_valid_dir :: proc(cmd: string) {
+	if (!os.exists("soma.toml")) {
+		fmt.printfln("soma (err): soma.toml not found!\n" +
+					"            %s must be ran from site root", cmd)
+		os.exit(1)
+	}
+	return
 }
 
 /*
