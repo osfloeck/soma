@@ -98,6 +98,14 @@ new-soma/
 └── index.md
 ```
 
+Note that particular frontmatter are reserved and are convenient attributes you may want to use.
+
+These include:
+* **content**:  Raw content of page
+* **category**: Category of page
+* **items**:    Collated items of category page
+* **page_ref**: URL for redirects
+
 ### Template example
 
 Below is an example of a customised template to extract frontmatter fields such as tags.
@@ -107,15 +115,15 @@ Below is an example of a customised template to extract frontmatter fields such 
 {% block content %}
 
 <h1>{{ title }}</h1>
-{{ content | safe }}
+{{ content }}
 
 <div class="projects">
     {% for item in items %}
     <div class="project" style="margin-bottom: 1rem;">
-        <a class="project-title" href="{{ item.url }}">{{ item.title }}</a>
+        <a class="project-title" href="{{ item.page_ref }}">{{ item.title }}</a>
 
-    {% if item.description %}
-    <div class="project-description">{{ item.description }}</div>
+    {% if item.desc %}
+    <div class="project-description">{{ item.desc }}</div>
     {% endif %}
 
     {% if item.tags %}
@@ -132,6 +140,7 @@ Below is an example of a customised template to extract frontmatter fields such 
 ```
 
 ## Coming soon
+- Better organisation options for users so content does not continue to fill categories at root
+- Builtin function for sorting content i.e. sort(attr="rank"). Currently, content is by default sorted by date, then title
 - Search & pagination
-- Commands `new category` & `new item`
-- Support for themes
+

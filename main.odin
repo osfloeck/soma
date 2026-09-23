@@ -256,6 +256,11 @@ build :: proc(working_dir: string, dev_mode: bool = false) {
 	// Render html and write to build
 	final_pages := _render_site(pages, final_templates)
 	_build_site(final_pages, build_dir, working_dir)
+
+	fmt.printfln("soma (info): build successful")
+    fmt.printfln("	templates : %d", len(final_templates))
+    fmt.printfln("	categories: %d", _n_unique_categories(final_pages))
+    fmt.printfln("	pages     : %d", len(final_pages))
 }
 
 /*
@@ -378,6 +383,28 @@ _discover_items :: proc(pages: ^[dynamic]Page, allocator: runtime.Allocator) {
 				}
 			}
 		}
+
+		// TODO(oskar): default sorting needs reworking
+		slice.sort_by(found[:], proc(i, j: Page) -> bool {
+			date_a, has_date_a := i.frontmatter["date"].(Date)
+			date_b, has_date_b := j.frontmatter["date"].(Date)
+
+			if has_date_a && has_date_b {
+				if date_a != date_b {
+					return _date_after(date_a, date_b)
+				}
+			} else if has_date_a {
+				return true
+			} else if has_date_b {
+				return false
+			}
+
+			title_a, _ := i.frontmatter["title"].(string)
+			title_b, _ := j.frontmatter["title"].(string)
+
+			return title_a < title_b
+		})
+
 		page.items = found[:]
 
 		// Register items array (pages)
@@ -428,12 +455,13 @@ _extract_frontmatter :: proc(frontmatter: string, allocator: runtime.Allocator) 
 	See `Value` for supported types
 */
 _parse_value :: proc(value: string, allocator: runtime.Allocator) -> Value {
-    if strings.has_prefix(value, "[") {
+	if strings.has_prefix(value, "[") {
         inner := value[1:len(value)-1]
         parts := strings.split(inner, ",", allocator)
 		result := make([dynamic]string, 0, len(parts), allocator)
         for part in parts {
 			trimmed := strings.trim_space(part)
+			trimmed = strings.trim(trimmed, "\"")
 			if (len(trimmed) == 0) {
 				continue
 			}
@@ -813,26 +841,27 @@ _render_tag :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variab
 	to_render := "none"
 
 	tag, sep, accessor := strings.partition(node.value, ".")
-	page := page
-
-	read: Value
-	read_ok: bool
 
 	item := _var_scope_lookup(scope, tag)
+	read: Value
+	read_ok: bool
 
 	switch item.type {
 		case .Undefined:
 			base := filepath.base(page.file_path)
-			fmt.printfln("soma (err): `%s` not found in frontmatter of `%s`", tag, base)
+			fmt.printfln("soma (err): `%s` not a property of `%s`", tag, base)
 		case .Page:
 			if sep == "." {
-				reg_lookup: Item
-				page = item.page
-				reg_lookup, read_ok = registry.items[{page.file_path, accessor}]
-				if read_ok { read = reg_lookup.value }
-				//read, read_ok = page.frontmatter[lookup]
+				reg_lookup, found := registry.items[{item.page.file_path, accessor}]
+				if found 
+				{ 
+					read = reg_lookup.value
+					read_ok = true
+				}
 			} else {
-				fmt.printfln("soma (err): variable `%s` is a page without a field access", tag)
+				fmt.printfln("soma (err): variable `%s` is a page and requires field access, e.g. `%s.title`",
+				tag,
+				tag)
 			}
 		case .Array:
 			fmt.printfln("soma (err): variable is an array of pages and is not allowed here")
@@ -841,9 +870,8 @@ _render_tag :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variab
 			read_ok = true
 	}
 
-	if !read_ok {
-		return
-	}
+	if !read_ok { return }
+
 	switch varient in read {
 		case string:
 			to_render = varient
@@ -864,7 +892,7 @@ _render_tag :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variab
 		case bool:
 			to_render = varient ? "true" : "false"
 		case Date:
-			to_render = format_date(varient)
+			to_render = fmt.tprintf("%d-%02d-%02d", varient.year, varient.month, varient.day)
 	}
 	
 	// Piping
@@ -886,13 +914,14 @@ _render_tag :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variab
 		loop_var (item), collection (items)
 */
 _render_for :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variable_Scope) {
+	for_scope: Variable_Scope
+	for_scope.prev = scope
+	
 	loop_var, _, collection := strings.partition(node.value, "in")
 	loop_var = strings.trim_space(loop_var)
 	collection = strings.trim_space(collection)
 
-	for_scope: Variable_Scope
-	for_scope.prev = scope
-	item := _var_scope_lookup(scope, collection)
+	item := _resolve_scoped_item(collection, scope)
 
 	// TODO(oskar): Assess whether or not we want to be able to
 	// handle other values like we do with int. Just []string & []Page?
@@ -928,7 +957,7 @@ _render_for :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variab
 			}
 		case .Page:
 		case .Array:
-			for &page in page.items {
+			for &page in item.items {
 				for_scope.variables[loop_var] = &registry.items[{
 					page.file_path, "",
 				}]
@@ -940,25 +969,51 @@ _render_for :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variab
 }
 
 _render_if :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variable_Scope) {
-	item := _var_scope_lookup(scope, node.value)
+	item := _resolve_scoped_item(node.value, scope)
 
 	if item.type == .Undefined {
 		fmt.printfln("soma (err): frontmatter `%s` not found in `%s/%s`",
-    			node.value, page.category, filepath.base(page.file_path))
+    		node.value, page.category, filepath.base(page.file_path))
+		return
 	}
 
-	should_render := true
-	val, is_bool := item.value.(bool)
-
-	if is_bool && !val {
-		should_render = false
+	bool_value, is_bool := item.value.(bool)
+	if is_bool && !bool_value {
+		return
 	}
 
-	if should_render {
-		for child in node.children {
-			_render_node(child, page, sb, scope)
-		}
+	for child in node.children {
+		_render_node(child, page, sb, scope)
 	}
+}
+
+/*
+	Resolves expression to handle dot access if required
+	i.e. `item.accessor` -> we find the relevant attribute
+	whereas 	  `item` -> we just return the item
+*/
+_resolve_scoped_item :: proc(expression: string, scope: ^Variable_Scope) -> ^Item {
+	tag, sep, accessor := strings.partition(expression, ".")
+
+	if sep != "." {
+		return _var_scope_lookup(scope, expression)
+	}
+
+	item := _var_scope_lookup(scope, tag)
+	if item.type != .Page {
+		undef := new(Item, context.allocator)
+        undef.type = .Undefined
+        return undef
+	}
+
+	field_item, found := &registry.items[{item.page.file_path, accessor}]
+	if !found {
+		undef := new(Item, context.allocator)
+		undef.type = .Undefined
+		return undef
+	}
+
+	return field_item
 }
 
 /*
@@ -973,12 +1028,9 @@ _build_site :: proc(build_pages: [dynamic]Page, build_dir: string, working_dir: 
 	asset_out,_ := filepath.join({build_dir, "/assets"}, context.allocator)
 	os.copy_directory_all(asset_out, asset_in)
 
-	for page in build_pages[:5] {
+	for page in build_pages {
 		build_path, _ := filepath.join({build_dir, _page_rel_output_path(page)}, context.allocator)
 		_write_text_file(build_path, page.content)
-
-		fmt.printfln("page.build_path: %v", page.file_path)
-		fmt.printfln("final_build_path: %v\n", build_path)
 	}
 }
 
@@ -1035,6 +1087,16 @@ _valid_dir :: proc(cmd: string) {
 		os.exit(1)
 	}
 	return
+}
+
+_n_unique_categories :: proc(pages: [dynamic]Page) -> (int) {
+    seen := make(map[string]bool, context.allocator)
+	for page in pages {
+        if page.category != "" {
+            seen[page.category] = true
+        }
+    }
+    return len(seen)
 }
 
 /*

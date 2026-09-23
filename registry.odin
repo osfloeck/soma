@@ -23,8 +23,8 @@ Variable_Scope :: struct {
 Item :: struct {
     name: string,
     page: Page,
-    items: []Page,
     value: Value,
+    items: []Page,
     type: Item_Type,
 }
 
