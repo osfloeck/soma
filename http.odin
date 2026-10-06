@@ -10,6 +10,7 @@ import "core:fmt"
 import "core:strings"
 import "core:net"
 import "core:os"
+import "core:sync"
 
 http_test :: proc() {
     port := 3000
@@ -17,7 +18,7 @@ http_test :: proc() {
 }
 
 listen_and_serve :: proc(build_dir: string, port:= 3000) -> (err: net.Network_Error) {
-    fmt.printfln("soma (info): Serving %q on http://localhost:%v\n", build_dir, port)
+    fmt.printfln("soma (info): Serving %q on http://localhost:%v", build_dir, port)
 
     endpoint := net.Endpoint {
         address = net.IP4_Any,
@@ -39,7 +40,7 @@ listen_and_serve :: proc(build_dir: string, port:= 3000) -> (err: net.Network_Er
             fmt.printfln("Error accepting client: %v", accept_err)
             continue
         }
-        handle_http_client(client_socket, serve_dir)
+        handle_http_client(client_socket, build_dir)
     }
 
     return nil
@@ -61,6 +62,10 @@ handle_http_client :: proc(client_socket: net.TCP_Socket, serve_dir: string) {
     request_path, req_ok := _path_from_req(string(buffer[:bytes_read]))
     if (!req_ok) {
         _send_status_response(client_socket, "400 Bad Request")
+        return
+    }
+    if request_path == RELOAD_ENDPOINT_PATH {
+        _send_reload_gen(client_socket)
         return
     }
     fmt.printfln("Request path: %s", request_path)
@@ -217,4 +222,22 @@ _read_file_from_path :: proc(file_path: string) -> ([]byte, os.Error) {
         return nil, nil
     }
     return bytes_read, err
+}
+
+_send_reload_gen :: proc(client_socket: net.TCP_Socket) {
+    current_gen := sync.atomic_load(&reload_generation)
+    response_body := fmt.tprintf("%d", current_gen)
+    response := fmt.tprintf(
+        "HTTP/1.1 200 OK\r\n" +
+        "Content-Type: text/plain\r\n" +
+        "Content-Length: %d\r\n" +
+        "Cache-Control: no-store\r\n" +
+        "Connection: close\r\n" +
+        "\r\n%s",
+        len(response_body), response_body)
+
+    _, send_err := net.send_tcp(client_socket, transmute([]byte)response)
+    if send_err != nil {
+        fmt.printfln("soma (err): Error sending reload gen: %v", send_err)
+    }
 }

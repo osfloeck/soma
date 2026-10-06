@@ -18,6 +18,8 @@ import "base:runtime"
 import "core:strconv"
 import "core:slice"
 import "core:time"
+import "core:thread"
+import "core:sync"
 
 foreign import md4c_html "system:md4c-html"
 
@@ -34,9 +36,31 @@ foreign md4c_html {
 
 // TODO(oskar): check actual md4c.h for more options
 MARKDOWN_PARSER_FLAGS :: c.uint(0x0040 | 0x0004)
-
 RESERVED_FRONTMATTER_KEYS :: []string{"content", "category", "items", "page_ref"}
 BUILD_DIR :: "/build"
+RELOAD_ENDPOINT_PATH :: "/soma-reload"
+RELOAD_SCRIPT :: `<script>
+(function () {
+    let knownGen = null;
+    async function checkForRebuild() {
+        try {
+            const response = await fetch("` + RELOAD_ENDPOINT_PATH + `", { cache: "no-store" });
+            const currentGen = await response.text();
+
+            if (knownGen === null) {
+                knownGen = currentGen;
+            } else if (knownGen !== currentGen) {
+                location.reload();
+            }
+        } catch {} 
+    }
+    checkForRebuild();
+    setInterval(checkForRebuild, 1000);
+})();
+</script>`
+
+/* (dev) Global state for current build gen */
+reload_generation: u64
 
 Page :: struct {
 	file_path: string, 				// home/user/my-site/index.md		
@@ -85,6 +109,11 @@ Node :: struct {
 	value: string,		// title
 	pipes: []string,	// {"upper", "truncate"}
 	children: []Node	
+}
+
+Watcher_Config :: struct {
+	build_dir: string,
+	working_dir: string
 }
 
 built_ins := map[string]Built_In_Function {
@@ -240,7 +269,8 @@ _write_text_file :: proc(path: string, contents: string) {
 	Clears /build, builds html from parsed markdown files,
 	does other stuff too
 */
-build :: proc(working_dir: string, dev_mode: bool = false) {
+build :: proc(working_dir: string, dev_mode: bool = false) -> time.Time {
+	last_modified := time.now()
 	build_alloc := context.allocator
 
 	build_dir, _ := filepath.join({working_dir, BUILD_DIR}, build_alloc)
@@ -258,13 +288,11 @@ build :: proc(working_dir: string, dev_mode: bool = false) {
     _discover_items(&pages, build_alloc)
 
 	// Render html and write to build
-	final_pages := _render_site(pages, final_templates)
+	final_pages := _render_site(pages, final_templates, dev_mode)
 	_build_site(final_pages, build_dir, working_dir)
 
-	fmt.printfln("soma (info): build successful")
-    fmt.printfln("	templates : %d", len(final_templates))
-    fmt.printfln("	categories: %d", _n_unique_categories(final_pages))
-    fmt.printfln("	pages     : %d", len(final_pages))
+	fmt.printfln("soma (info): Build success [templates=%d categories=%d pages=%d]", len(final_templates), _n_unique_categories(final_pages), len(final_pages))
+	return last_modified
 }
 
 /*
@@ -778,7 +806,7 @@ _search_templates :: proc(key: string, all: [dynamic]Parsed_Template) -> (Parsed
 /*
 	Render the final build contents from resolved templates and content
 */
-_render_site :: proc(pages: [dynamic]Page, templates: [dynamic]Parsed_Template) -> [dynamic]Page {
+_render_site :: proc(pages: [dynamic]Page, templates: [dynamic]Parsed_Template, dev: bool) -> [dynamic]Page {
 	final_pages := make([dynamic]Page, context.allocator)
 
 	for page in pages {
@@ -812,6 +840,10 @@ _render_site :: proc(pages: [dynamic]Page, templates: [dynamic]Parsed_Template) 
 		}
 
 		build_html := strings.to_string(sb)
+
+		if (dev) {
+			build_html = _append_dev_script(build_html)
+		}
 		
 		//fmt.printfln("CONTENT RAW HTML: %v", page.content)
 		//fmt.printfln("FINAL AST: %v", template.nodes)
@@ -1111,50 +1143,72 @@ _n_unique_categories :: proc(pages: [dynamic]Page) -> (int) {
 	which supports live reload
 */
 serve :: proc(working_dir: string, build_dir: string, port: int, dev: bool) {
-	last_modified := time.now()
-
+	/* If in dev mode, we start a file watching thread which rebuilds
+	   as it detects changes to the site dir */
 	if dev {
-		for {
-			// Sleep for one second
-			time.sleep(1 * time.Second)
+		config := new(Watcher_Config, context.allocator)
+		config.build_dir = build_dir
+		config.working_dir = working_dir
+		thread.create_and_start_with_data(rawptr(config), _watch_directory, context)
+	} 
+	listen_and_serve(build_dir, port)
+}
 
-			// Anything changed?
-			change := has_updated(working_dir, build_dir, last_modified)
+/*
+	This process first builds the site then rebuilds as we
+	detect changes
+*/
+_watch_directory :: proc(raw_config: rawptr) {
+	config := cast(^Watcher_Config)raw_config
+	last_build := build(config.working_dir, true)
 
-			// If yes, fresh timestamp, rebuild, store new timestamp
-			if change {
-				last_modified = time.now()
-				build(working_dir, true)
-			}
+	for {
+		time.sleep(1 * time.Second)
+		if _has_updated(config.working_dir, config.build_dir, last_build) {
+			fmt.printfln("soma (info): Change detected! Rebuilding..")
+			last_build = build(config.working_dir, true)
+			sync.atomic_add(&reload_generation, 1)
 		}
-	} else {
-		listen_and_serve(build_dir, port)
 	}
 }
 
 /*
-	Checks if any files in this directory have changed since last_modified
+	This function checks to see if a file within the site has
+	updated recently
 */
-has_updated :: proc(working_dir: string, build_dir: string, last_modified: time.Time) -> bool {
-	w := os.walker_create_path(working_dir)
-	defer os.walker_destroy(&w)
+_has_updated :: proc(working_dir: string, build_dir: string, last_modified: time.Time) -> bool {
+	walker := os.walker_create_path(working_dir)
+	defer os.walker_destroy(&walker)
 
-	for info in os.walker_walk(&w) {
-		if (info.type == .Directory && info.fullpath == build_dir) {
-			// Skip /build
-			os.walker_skip_dir(&w)
+	for file_info in os.walker_walk(&walker) {
+		if file_info.type == .Directory && file_info.fullpath == build_dir {
+			os.walker_skip_dir(&walker)
 			continue
 		}
 
-		// start : 10:12:30
-		// curr  : 10:14:20
-		delta := time.diff(last_modified, info.modification_time)
-		if delta > 0 { 
-			return true 
+		delta := time.diff(last_modified, file_info.modification_time)
+		if delta > 0 {
+			return true
 		}
 	}
 
 	return false
+}
+
+/*
+	In dev mode it will append the script to check for the build gen
+	for livereload purposes
+*/
+_append_dev_script :: proc(raw_html: string) -> string {
+	last_index := strings.last_index(raw_html, "</body>")
+
+	if last_index == -1 {
+		return strings.concatenate({raw_html, RELOAD_SCRIPT}, context.allocator)
+	}
+
+	return strings.concatenate(
+		{raw_html[:last_index], RELOAD_SCRIPT, raw_html[last_index:]},
+		context.allocator)
 }
 
 /*
