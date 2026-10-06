@@ -13,15 +13,11 @@ import "core:os"
 
 http_test :: proc() {
     port := 3000
-    listen_and_serve(port)
+    listen_and_serve("build_dir", port)
 }
 
-listen_and_serve :: proc(port:= 3000) -> (err: net.Network_Error) {
-    serve_dir, gwd_err := os.get_working_directory(context.allocator)
-    if (gwd_err != nil) {
-        fmt.println("soma (error): Failed to get working directory")
-    }
-    fmt.printfln("soma: Serving %q on http://localhost:%v\n", serve_dir, port)
+listen_and_serve :: proc(build_dir: string, port:= 3000) -> (err: net.Network_Error) {
+    fmt.printfln("soma (info): Serving %q on http://localhost:%v\n", build_dir, port)
 
     endpoint := net.Endpoint {
         address = net.IP4_Any,

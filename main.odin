@@ -17,6 +17,7 @@ import "core:c"
 import "base:runtime"
 import "core:strconv"
 import "core:slice"
+import "core:time"
 
 foreign import md4c_html "system:md4c-html"
 
@@ -35,6 +36,7 @@ foreign md4c_html {
 MARKDOWN_PARSER_FLAGS :: c.uint(0x0040 | 0x0004)
 
 RESERVED_FRONTMATTER_KEYS :: []string{"content", "category", "items", "page_ref"}
+BUILD_DIR :: "/build"
 
 Page :: struct {
 	file_path: string, 				// home/user/my-site/index.md		
@@ -112,6 +114,8 @@ main :: proc() {
 
 	defer free_all(context.allocator)
 	working_dir, _ := os.getwd(context.allocator)
+	build_dir, _ := filepath.join({working_dir, BUILD_DIR}, context.allocator)
+
 	if command != "init" { _valid_dir(command) }
 
 	switch command {
@@ -141,7 +145,7 @@ main :: proc() {
 				port = parsed_port
 			}
 		}
-		serve(port, dev)
+		serve(working_dir, build_dir, port, dev)
 
 	case "clean":
 		clean(working_dir)
@@ -239,7 +243,7 @@ _write_text_file :: proc(path: string, contents: string) {
 build :: proc(working_dir: string, dev_mode: bool = false) {
 	build_alloc := context.allocator
 
-	build_dir, _ := filepath.join({working_dir, "/build"}, build_alloc)
+	build_dir, _ := filepath.join({working_dir, BUILD_DIR}, build_alloc)
 	os.remove_all(build_dir)
 	os.mkdir(build_dir)
 
@@ -250,7 +254,7 @@ build :: proc(working_dir: string, dev_mode: bool = false) {
 	final_templates := _resolve_templates(parsed_templates)	// Render context templates
 
 	// Process site content
-	pages := _discover_content(working_dir, build_alloc)
+	pages := _discover_content(working_dir, build_dir, build_alloc)
     _discover_items(&pages, build_alloc)
 
 	// Render html and write to build
@@ -268,20 +272,21 @@ build :: proc(working_dir: string, dev_mode: bool = false) {
 	to ensure it is relevant i.e. not draft, valid frontmatter. It also
 	populates the registry with page content and frontmatter
 */
-_discover_content :: proc(working_dir: string, allocator: runtime.Allocator) -> [dynamic]Page {
+_discover_content :: proc(working_dir: string, build_dir: string, allocator: runtime.Allocator) -> [dynamic]Page {
 	discovered := make([dynamic]Page, allocator)
 
 	w := os.walker_create_path(working_dir)
 	defer os.walker_destroy(&w)
 	
+
 	for file in os.walker_walk(&w) {
-		if (file.type != .Regular) || (filepath.ext(file.name) != ".md") {
-			// Skip dirs & non-md files
-			continue
-		}
-		if (strings.has_prefix(file.fullpath, strings.concatenate({working_dir, "/build"}, allocator))) {
+		if (file.type == .Directory && file.fullpath == build_dir) {
 			// Skip /build
 			os.walker_skip_dir(&w)
+			continue
+		}
+		if (file.type != .Regular) || (filepath.ext(file.name) != ".md") {
+			// Skip dirs & non-md files
 			continue
 		}
 		if (strings.has_prefix(file.name, "_")) {
@@ -1105,8 +1110,51 @@ _n_unique_categories :: proc(pages: [dynamic]Page) -> (int) {
 	Serve site at specific port. Can be in dev mode
 	which supports live reload
 */
-serve :: proc(port: int, dev: bool) {
-	listen_and_serve(port)
+serve :: proc(working_dir: string, build_dir: string, port: int, dev: bool) {
+	last_modified := time.now()
+
+	if dev {
+		for {
+			// Sleep for one second
+			time.sleep(1 * time.Second)
+
+			// Anything changed?
+			change := has_updated(working_dir, build_dir, last_modified)
+
+			// If yes, fresh timestamp, rebuild, store new timestamp
+			if change {
+				last_modified = time.now()
+				build(working_dir, true)
+			}
+		}
+	} else {
+		listen_and_serve(build_dir, port)
+	}
+}
+
+/*
+	Checks if any files in this directory have changed since last_modified
+*/
+has_updated :: proc(working_dir: string, build_dir: string, last_modified: time.Time) -> bool {
+	w := os.walker_create_path(working_dir)
+	defer os.walker_destroy(&w)
+
+	for info in os.walker_walk(&w) {
+		if (info.type == .Directory && info.fullpath == build_dir) {
+			// Skip /build
+			os.walker_skip_dir(&w)
+			continue
+		}
+
+		// start : 10:12:30
+		// curr  : 10:14:20
+		delta := time.diff(last_modified, info.modification_time)
+		if delta > 0 { 
+			return true 
+		}
+	}
+
+	return false
 }
 
 /*
@@ -1114,7 +1162,7 @@ serve :: proc(port: int, dev: bool) {
 	Cleans the specified build directory
 */
 clean :: proc(working_dir: string) {
-	path := strings.concatenate({working_dir, "/build"}, context.allocator)
+	path := strings.concatenate({working_dir, BUILD_DIR}, context.allocator)
 
 	err := os.remove_all(path)
 	if (err != nil) {
