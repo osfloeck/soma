@@ -1105,7 +1105,9 @@ _markdown_to_html :: proc(markdown_source: string, allocator: runtime.Allocator)
 		0,
 	)
 
-	return strings.to_string(builder)
+	final := _highlight_code_blocks(strings.to_string(builder))
+
+	return final
 }
 
 _md4c_callback :: proc "c" (output: cstring, size: c.uint, userdata: rawptr) {
@@ -1115,6 +1117,29 @@ _md4c_callback :: proc "c" (output: cstring, size: c.uint, userdata: rawptr) {
 	builder := cast(^strings.Builder)userdata
 	chunk := string(output)
 	strings.write_string(builder, chunk[:size])
+}
+
+/*
+	Takes in the content of a page produced by md4c, and
+	processes code blocks if found
+*/
+_highlight_code_blocks :: proc(content: string) -> string {
+	cursor := 0
+	for cursor < len(content) {
+
+		start := strings.index(content[cursor:], "<pre><code")
+		end := strings.index(content[start:], "</code></pre>")
+		if (start == -1 || end == -1) { return content }
+
+		// Relative -> absolute pos
+		start, end = start + cursor, end + cursor
+		curr_block := content[start:end + 13]
+
+		fmt.printfln("%v", curr_block)
+
+		cursor = cursor + end + 1
+	}
+	return content
 }
 
 _valid_dir :: proc(cmd: string) {
@@ -1163,11 +1188,14 @@ _watch_directory :: proc(raw_config: rawptr) {
 	last_build := build(config.working_dir, true)
 
 	for {
+		// Each second, check to see if any updates
 		time.sleep(1 * time.Second)
 		if _has_updated(config.working_dir, config.build_dir, last_build) {
 			fmt.printfln("soma (info): Change detected! Rebuilding..")
 			last_build = build(config.working_dir, true)
 			sync.atomic_add(&reload_generation, 1)
+			/* This updates `reload_generation` which is
+			   also used in http.odin for the response to the browser */
 		}
 	}
 }

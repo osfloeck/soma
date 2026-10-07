@@ -64,6 +64,7 @@ handle_http_client :: proc(client_socket: net.TCP_Socket, serve_dir: string) {
         _send_status_response(client_socket, "400 Bad Request")
         return
     }
+    // Returns build generation to browser in dev mode
     if request_path == RELOAD_ENDPOINT_PATH {
         _send_reload_gen(client_socket)
         return
