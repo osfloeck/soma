@@ -511,10 +511,15 @@ _parse_value :: proc(value: string, allocator: runtime.Allocator) -> Value {
 	}
 
     if strings.contains(value, "-") {
-        date, ok := _parse_iso_date(value)
-        if ok { 
-			return date 
-		}
+		// XXXX-XX-XX
+		// 0123456789
+		trimmed := strings.trim(value, "\"")
+		if len(trimmed) == 10 && trimmed[4] == '-' && trimmed[7] == '-' {
+			date, ok := _parse_iso_date(trimmed)
+			if ok { 
+				return date 
+			}
+		}        
     }
 
     number, ok := strconv.parse_int(value, 10)
@@ -1105,9 +1110,10 @@ _markdown_to_html :: proc(markdown_source: string, allocator: runtime.Allocator)
 		0,
 	)
 
-	final := _highlight_code_blocks(strings.to_string(builder))
+	// TODO(oskar): Finish implementing this & remove highlight.js
+	//final := _highlight_code_blocks(strings.to_string(builder))
 
-	return final
+	return strings.to_string(builder)
 }
 
 _md4c_callback :: proc "c" (output: cstring, size: c.uint, userdata: rawptr) {
@@ -1124,22 +1130,53 @@ _md4c_callback :: proc "c" (output: cstring, size: c.uint, userdata: rawptr) {
 	processes code blocks if found
 */
 _highlight_code_blocks :: proc(content: string) -> string {
+	OPEN_TAG :: "<pre><code"
+	CLOSE_TAG :: "</code></pre>"
+	
+	sb := strings.builder_make(context.allocator)
 	cursor := 0
+
 	for cursor < len(content) {
+		rel_start := strings.index(content[cursor:], OPEN_TAG)
+		if rel_start == -1 { break }
+		start := cursor + rel_start
 
-		start := strings.index(content[cursor:], "<pre><code")
-		end := strings.index(content[start:], "</code></pre>")
-		if (start == -1 || end == -1) { return content }
+		rel_end := strings.index(content[start:], CLOSE_TAG)
+		if rel_end == -1 { break }
+		end := start + rel_end + len(CLOSE_TAG)
 
-		// Relative -> absolute pos
-		start, end = start + cursor, end + cursor
-		curr_block := content[start:end + 13]
+		// fmt.printfln("start: %v, end: %v", start, end)
+		// fmt.printfln("block: %v", content[start:end])
 
-		fmt.printfln("%v", curr_block)
+		// Process gap first, then block itself
+		strings.write_string(&sb, content[cursor:start])
+		_tokenise_code_block(&sb, content[start:end])
 
-		cursor = cursor + end + 1
+		cursor = end
 	}
-	return content
+	
+	// Rest of content after last code block if any
+	strings.write_string(&sb, content[cursor:])
+	return strings.to_string(sb)
+}
+
+/*
+	Processes individual code block passed in and appends to string
+	builder the enhanced string with properties for styling
+	
+	TODO(oskar): add language capturing, more granular
+	& highlighting options
+*/
+_tokenise_code_block :: proc(sb: ^strings.Builder, block: string) {
+	OPEN_TAG :: "<pre><code"
+	CLOSE_TAG :: "</code></pre>"
+	
+	rel_start := strings.index(block[len(OPEN_TAG):], ">")
+	start := rel_start + len(OPEN_TAG) + 1
+	end := len(block) - len(CLOSE_TAG) // caller guarantees block ends with tag
+	
+	fmt.printfln("pre: %v, block: %v, post: %v", block[:start], block[start:end], CLOSE_TAG)
+	strings.write_string(sb, block)
 }
 
 _valid_dir :: proc(cmd: string) {
