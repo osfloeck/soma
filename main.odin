@@ -119,6 +119,7 @@ Watcher_Config :: struct {
 built_ins := map[string]Built_In_Function {
 	"format_date" = format_date,
 	"uppercase" = uppercase,
+	"lowercase" = lowercase,
 	"brief" = brief
 }
 
@@ -959,7 +960,7 @@ _render_for :: proc(node: Node, page: Page, sb: ^strings.Builder, scope: ^Variab
 	for_scope: Variable_Scope
 	for_scope.prev = scope
 	
-	loop_var, _, collection := strings.partition(node.value, "in")
+	loop_var, _, collection := strings.partition(node.value, " in ")
 	loop_var = strings.trim_space(loop_var)
 	collection = strings.trim_space(collection)
 

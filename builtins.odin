@@ -69,11 +69,21 @@ format_date :: proc(value: Value) -> string {
     test_case -> TEST_CASE
 */
 uppercase :: proc(value: Value) -> string {
-	#partial switch varient in value {
+	#partial switch variant in value {
 		case string:
-			return strings.to_upper(varient, context.allocator)
+			return strings.to_upper(variant, context.allocator)
 		case:
 			fmt.printfln("soma (err): passed non-string to `uppercase` builtin")
+			return ""
+	}
+}
+
+lowercase :: proc(value: Value) -> string {
+	#partial switch variant in value {
+		case string:
+			return strings.to_lower(variant, context.allocator)
+		case:
+			fmt.printfln("soma (err): passed non-string to `lowercase` builtin")
 			return ""
 	}
 }
