@@ -259,7 +259,7 @@ init :: proc(name: string) {
 
 _write_text_file :: proc(path: string, contents: string) {
 	parent := filepath.dir(path)
-	os.make_directory(parent)
+	os.make_directory_all(parent)
 	err := os.write_entire_file(path, transmute([]u8)contents)
 	if (err != nil) {
 		fmt.printfln("soma (error): could not write file %s", path)
